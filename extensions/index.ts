@@ -222,20 +222,22 @@ export default function prettyTui(pi: ExtensionAPI) {
     return lines;
   };
 
-  const liveBashResult = (
+  const bashResult = (
     context: any,
     theme: any,
+    summary: string,
     output: string,
     expanded: boolean,
+    status: ToolStatus,
   ): Component => {
-    setStatus(context, "running");
+    setStatus(context, status);
     const lines = terminalOutputLines(output);
     const shown = expanded ? lines : lines.slice(-5);
     const omitted = lines.length - shown.length;
     const rows: DisplayRow[] = [{
       prefix: theme.fg("dim", "└  "),
       continuation: "   ",
-      content: theme.fg("toolOutput", "Running…"),
+      content: theme.fg(status === "error" ? "error" : "toolOutput", summary),
     }];
 
     if (omitted > 0) {
@@ -302,15 +304,26 @@ export default function prettyTui(pi: ExtensionAPI) {
     },
     renderResult(toolResult: any, options: any, theme: any, context: any) {
       const output = textContent(toolResult);
-      if (options.isPartial) return liveBashResult(context, theme, output, options.expanded);
-      const failed = completeStatus(context, output);
-      const lines = nonEmptyLines(output);
+      if (options.isPartial) {
+        return bashResult(context, theme, "Running…", output, options.expanded, "running");
+      }
+
+      const failed = isError(context, output);
+      const outputLines = terminalOutputLines(output);
+      const lineCount = outputLines.filter((line) => line.length > 0).length;
       const summary = failed
-        ? output.split("\n")[0] || "Command failed"
-        : output
-          ? `Done · ${lines} output ${lines === 1 ? "line" : "lines"}`
+        ? outputLines[0] || "Command failed"
+        : outputLines.length > 0
+          ? `Done · ${lineCount} output ${lineCount === 1 ? "line" : "lines"}`
           : "Done";
-      return result(theme, summary, output, options.expanded, failed);
+      return bashResult(
+        context,
+        theme,
+        summary,
+        output,
+        options.expanded,
+        failed ? "error" : "success",
+      );
     },
   } as any);
 
