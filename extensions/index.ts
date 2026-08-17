@@ -194,6 +194,44 @@ export default function prettyTui(pi: ExtensionAPI) {
     return result(theme, label);
   };
 
+  const liveBashResult = (
+    context: any,
+    theme: any,
+    output: string,
+    expanded: boolean,
+  ): Component => {
+    setStatus(context, "running");
+    const lines = output.split("\n");
+    while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+
+    const shown = expanded ? lines : lines.slice(-5);
+    const omitted = lines.length - shown.length;
+    const rows: DisplayRow[] = [{
+      prefix: theme.fg("dim", "└  "),
+      continuation: "   ",
+      content: theme.fg("toolOutput", "Running…"),
+    }];
+
+    if (omitted > 0) {
+      rows.push({
+        prefix: theme.fg("muted", "   │ "),
+        continuation: theme.fg("muted", "   │ "),
+        content: theme.fg("muted", `… ${omitted} earlier ${omitted === 1 ? "line" : "lines"}`),
+      });
+    }
+
+    for (let index = 0; index < shown.length; index++) {
+      const isLast = index === shown.length - 1;
+      rows.push({
+        prefix: theme.fg("dim", isLast ? "   └ " : "   │ "),
+        continuation: theme.fg("dim", "   │ "),
+        content: theme.fg("toolOutput", shown[index] || " "),
+      });
+    }
+
+    return block(rows);
+  };
+
   const completeStatus = (context: any, output: string): boolean => {
     const failed = isError(context, output);
     setStatus(context, failed ? "error" : "success");
@@ -237,8 +275,8 @@ export default function prettyTui(pi: ExtensionAPI) {
       return call(theme, "Bash", command, context.state);
     },
     renderResult(toolResult: any, options: any, theme: any, context: any) {
-      if (options.isPartial) return partialResult(context, theme, "Running…");
       const output = textContent(toolResult);
+      if (options.isPartial) return liveBashResult(context, theme, output, options.expanded);
       const failed = completeStatus(context, output);
       const lines = nonEmptyLines(output);
       const summary = failed
