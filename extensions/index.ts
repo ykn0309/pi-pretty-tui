@@ -233,7 +233,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     ...bash,
     renderShell: "self",
     renderCall(args: any, theme: any, context: any) {
-      const command = String(args.command).replace(/\s*\n\s*/g, " ↵ ");
+      const command = typeof args.command === "string" ? args.command : "";
       return call(theme, "Bash", command, context.state);
     },
     renderResult(toolResult: any, options: any, theme: any, context: any) {
