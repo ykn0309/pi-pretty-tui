@@ -201,7 +201,10 @@ export default function prettyTui(pi: ExtensionAPI) {
     expanded: boolean,
   ): Component => {
     setStatus(context, "running");
-    const lines = output.split("\n");
+    // Progress renderers such as tqdm redraw with carriage returns rather than
+    // newlines. Treat every terminal line boundary as an update line so the
+    // collapsed preview still keeps only the latest five states.
+    const lines = output.split(/\r\n|\r|\n/);
     while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
 
     const shown = expanded ? lines : lines.slice(-5);
