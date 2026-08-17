@@ -101,20 +101,53 @@ export default function prettyTui(pi: ExtensionAPI) {
     context.state.compactToolStatus = status;
   };
 
+  const callRow = (theme: any, name: string, detail: string, state: any): DisplayRow => ({
+    prefix: () => {
+      const status = (state.compactToolStatus ?? "running") as ToolStatus;
+      const color = status === "success" ? "success" : status === "error" ? "error" : "dim";
+      return theme.fg(color, "● ");
+    },
+    continuation: "  ",
+    content:
+      theme.fg("accent", theme.bold(name)) +
+      theme.fg("dim", "(") +
+      theme.fg("text", detail) +
+      theme.fg("dim", ")"),
+  });
+
   const call = (theme: any, name: string, detail: string, state: any) =>
-    block([{
-      prefix: () => {
-        const status = (state.compactToolStatus ?? "running") as ToolStatus;
-        const color = status === "success" ? "success" : status === "error" ? "error" : "dim";
-        return theme.fg(color, "● ");
-      },
-      continuation: "  ",
-      content:
-        theme.fg("accent", theme.bold(name)) +
-        theme.fg("dim", "(") +
-        theme.fg("text", detail) +
-        theme.fg("dim", ")"),
-    }]);
+    block([callRow(theme, name, detail, state)]);
+
+  const writeCall = (theme: any, path: string, content: string, expanded: boolean, state: any) => {
+    const lines = content.replace(/\t/g, "    ").split("\n");
+    while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+
+    const total = lines.length;
+    const shown = lines.slice(0, expanded ? total : 10);
+    const remaining = total - shown.length;
+    const rows: DisplayRow[] = [
+      callRow(theme, "Write", `${path} · ${total} ${total === 1 ? "line" : "lines"}`, state),
+    ];
+
+    for (let index = 0; index < shown.length; index++) {
+      const isLast = index === shown.length - 1 && remaining === 0;
+      rows.push({
+        prefix: theme.fg("dim", isLast ? "   └ " : "   │ "),
+        continuation: theme.fg("dim", "   │ "),
+        content: theme.fg("toolOutput", shown[index] || " "),
+      });
+    }
+
+    if (remaining > 0) {
+      rows.push({
+        prefix: theme.fg("muted", "   └ "),
+        continuation: "     ",
+        content: theme.fg("muted", `… ${remaining} more ${remaining === 1 ? "line" : "lines"}`),
+      });
+    }
+
+    return block(rows);
+  };
 
   const result = (
     theme: any,
@@ -261,8 +294,8 @@ export default function prettyTui(pi: ExtensionAPI) {
     ...write,
     renderShell: "self",
     renderCall(args: any, theme: any, context: any) {
-      const content = String(args.content ?? "");
-      return call(theme, "Write", `${args.path} · ${nonEmptyLines(content)} lines`, context.state);
+      const content = typeof args.content === "string" ? args.content : "";
+      return writeCall(theme, String(args.path ?? ""), content, context.expanded, context.state);
     },
     renderResult(toolResult: any, options: any, theme: any, context: any) {
       if (options.isPartial) return partialResult(context, theme, "Writing…");

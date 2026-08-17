@@ -9,6 +9,7 @@ A visual refinement extension for the [Pi coding agent](https://pi.dev/). It pro
 - Compact `Read`, `Bash`, `Edit`, `Write`, `Grep`, `Find`, and `List` calls
 - Gray running, green success, and red failure indicators
 - Concise result summaries with expandable output
+- Native-style `Write` previews: first 10 lines when collapsed, full content when expanded
 - Colored `+added` and `-removed` edit statistics and diffs
 - Correct hanging indentation for long paths and wrapped tool output
 - Bullet (`•`) markers for unordered Markdown lists
@@ -25,7 +26,7 @@ Pi may warn that built-in tools are being overridden. This is expected: pi-prett
 
 ## Expand tool output
 
-Press `Ctrl+O` (Pi's default `app.tools.expand` keybinding) to show or hide detailed output and edit diffs.
+Press `Ctrl+O` (Pi's default `app.tools.expand` keybinding) to show or hide detailed output, edit diffs, and complete `Write` content.
 
 ## Compatibility notice
 
