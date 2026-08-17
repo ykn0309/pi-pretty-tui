@@ -194,6 +194,34 @@ export default function prettyTui(pi: ExtensionAPI) {
     return result(theme, label);
   };
 
+  const terminalOutputLines = (output: string): string[] => {
+    const lines: string[] = [];
+    let current = "";
+
+    for (let index = 0; index < output.length; index++) {
+      const char = output[index];
+      if (char === "\r") {
+        if (output[index + 1] === "\n") {
+          lines.push(current);
+          current = "";
+          index++;
+        } else {
+          // A bare carriage return redraws the current terminal line. Progress
+          // bars such as tqdm use this to update in place.
+          current = "";
+        }
+      } else if (char === "\n") {
+        lines.push(current);
+        current = "";
+      } else {
+        current += char;
+      }
+    }
+
+    if (current) lines.push(current);
+    return lines;
+  };
+
   const liveBashResult = (
     context: any,
     theme: any,
@@ -201,12 +229,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     expanded: boolean,
   ): Component => {
     setStatus(context, "running");
-    // Progress renderers such as tqdm redraw with carriage returns rather than
-    // newlines. Treat every terminal line boundary as an update line so the
-    // collapsed preview still keeps only the latest five states.
-    const lines = output.split(/\r\n|\r|\n/);
-    while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
-
+    const lines = terminalOutputLines(output);
     const shown = expanded ? lines : lines.slice(-5);
     const omitted = lines.length - shown.length;
     const rows: DisplayRow[] = [{
