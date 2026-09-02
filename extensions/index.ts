@@ -347,14 +347,68 @@ export default function prettyTui(pi: ExtensionAPI) {
     return failed;
   };
 
-  const activeToolCall = (theme: any, name: string, state: any): Component => ({
+  type ToolSummaryData = { count: number; failed: number };
+  const supportedTools = new Set(["read", "bash", "edit", "write", "grep", "find", "ls"]);
+  type CleanRunState = {
+    activeToolCallId?: string;
+    lastCompletedToolCallId?: string;
+    count: number;
+    failed: number;
+    active: boolean;
+    settled: boolean;
+  };
+  const cleanRun: CleanRunState = {
+    count: 0,
+    failed: 0,
+    active: false,
+    settled: false,
+  };
+
+  const summaryText = (count: number, failed: number): string => {
+    const countLabel = `${count} tool ${count === 1 ? "call" : "calls"}`;
+    return failed > 0 ? `${countLabel} · ${failed} failed` : countLabel;
+  };
+
+  const summaryRow = (theme: any, count: number, failed: number): DisplayRow => ({
+    prefix: theme.fg(failed > 0 ? "error" : "success", "● "),
+    continuation: "  ",
+    content: theme.fg("accent", theme.bold("Tools")) + theme.fg("dim", "(") +
+      theme.fg("text", summaryText(count, failed)) + theme.fg("dim", ")"),
+  });
+
+  /**
+   * Clean mode keeps one live row in the existing tool component. This avoids
+   * waiting for agent_end (which can be followed by retry/compaction) and also
+   * leaves a visible count while the model is thinking between tool calls.
+   */
+  const cleanToolCall = (theme: any, name: string, toolCallId: string, state: any): Component => ({
     render(width: number): string[] {
-      if ((state.compactToolStatus ?? "running") !== "running") return [];
-      return block([{
-        prefix: theme.fg("dim", "● "),
-        continuation: "  ",
-        content: theme.fg("accent", theme.bold(name)) + theme.fg("muted", "…"),
-      }]).render(width);
+      if (renderMode !== "clean" || cleanRun.settled) return [];
+
+      if (cleanRun.activeToolCallId === toolCallId) {
+        return block([{
+          prefix: theme.fg("dim", "● "),
+          continuation: "  ",
+          content: theme.fg("accent", theme.bold(name)) + theme.fg("muted", "…"),
+        }]).render(width);
+      }
+
+      if (!cleanRun.activeToolCallId && cleanRun.lastCompletedToolCallId === toolCallId && cleanRun.count > 0) {
+        return block([summaryRow(theme, cleanRun.count, cleanRun.failed)]).render(width);
+      }
+
+      // During the tiny gap before tool_execution_start, retain the natural
+      // pending state for a component that Pi has just created.
+      if (!cleanRun.activeToolCallId && cleanRun.active &&
+          (state.compactToolStatus ?? "running") === "running" && cleanRun.count === 0) {
+        return block([{
+          prefix: theme.fg("dim", "● "),
+          continuation: "  ",
+          content: theme.fg("accent", theme.bold(name)) + theme.fg("muted", "…"),
+        }]).render(width);
+      }
+
+      return [];
     },
     invalidate() {},
   });
@@ -365,40 +419,53 @@ export default function prettyTui(pi: ExtensionAPI) {
     return block([]);
   };
 
-  type ToolSummaryData = { count: number; failed: number };
-  const supportedTools = new Set(["read", "bash", "edit", "write", "grep", "find", "ls"]);
-  let runToolCount = 0;
-  let runFailedCount = 0;
-
-  pi.registerEntryRenderer<ToolSummaryData>("pretty-tui-tool-summary", (entry, { expanded }, theme) => {
-    if (renderMode !== "clean" || expanded) return block([]);
-    const count = entry.data?.count ?? 0;
-    const failed = entry.data?.failed ?? 0;
-    const countLabel = `${count} tool ${count === 1 ? "call" : "calls"}`;
-    const detail = failed > 0 ? `${countLabel} · ${failed} failed` : countLabel;
-    return block([{
-      prefix: theme.fg(failed > 0 ? "error" : "success", "● "),
-      continuation: "  ",
-      content: theme.fg("accent", theme.bold("Tools")) + theme.fg("dim", "(") +
-        theme.fg("text", detail) + theme.fg("dim", ")"),
-    }]);
-  });
+  pi.registerEntryRenderer<ToolSummaryData>("pretty-tui-tool-summary", (entry, { expanded }, theme) => ({
+    render(width: number): string[] {
+      if (renderMode !== "clean" || expanded) return [];
+      const count = entry.data?.count ?? 0;
+      const failed = entry.data?.failed ?? 0;
+      return block([summaryRow(theme, count, failed)]).render(width);
+    },
+    invalidate() {},
+  }));
 
   pi.on("agent_start", () => {
-    runToolCount = 0;
-    runFailedCount = 0;
+    // A retry can start another low-level agent loop. Keep the accumulated
+    // count until the whole run reaches agent_settled.
+    if (!cleanRun.active) {
+      cleanRun.count = 0;
+      cleanRun.failed = 0;
+      cleanRun.lastCompletedToolCallId = undefined;
+      cleanRun.settled = false;
+    }
+    cleanRun.active = true;
+    cleanRun.activeToolCallId = undefined;
   });
   pi.on("tool_execution_start", (event) => {
-    if (supportedTools.has(event.toolName)) runToolCount++;
+    if (!supportedTools.has(event.toolName)) return;
+    cleanRun.active = true;
+    cleanRun.activeToolCallId = event.toolCallId;
   });
   pi.on("tool_execution_end", (event) => {
-    if (supportedTools.has(event.toolName) && event.isError) runFailedCount++;
+    if (!supportedTools.has(event.toolName)) return;
+    cleanRun.count++;
+    if (event.isError) cleanRun.failed++;
+    cleanRun.lastCompletedToolCallId = event.toolCallId;
+    if (cleanRun.activeToolCallId === event.toolCallId) cleanRun.activeToolCallId = undefined;
   });
   pi.on("agent_end", () => {
-    if (renderMode === "clean" && runToolCount > 0) {
+    // No summary is appended here: this event may be followed by an automatic
+    // retry or compaction. The live row remains available until settled.
+    cleanRun.activeToolCallId = undefined;
+  });
+  pi.on("agent_settled", () => {
+    cleanRun.active = false;
+    cleanRun.activeToolCallId = undefined;
+    cleanRun.settled = true;
+    if (renderMode === "clean" && cleanRun.count > 0) {
       pi.appendEntry<ToolSummaryData>("pretty-tui-tool-summary", {
-        count: runToolCount,
-        failed: runFailedCount,
+        count: cleanRun.count,
+        failed: cleanRun.failed,
       });
     }
   });
@@ -408,7 +475,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     ...read,
     renderShell: "self",
     renderCall(args: any, theme: any, context: any) {
-      if (renderMode === "clean" && !context.expanded) return activeToolCall(theme, "Read", context.state);
+      if (renderMode === "clean" && !context.expanded) return cleanToolCall(theme, "Read", context.toolCallId, context.state);
       const range = args.offset || args.limit
         ? ` · lines ${args.offset ?? 1}${args.limit ? `–${(args.offset ?? 1) + args.limit - 1}` : "+"}`
         : "";
@@ -438,7 +505,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     ...bash,
     renderShell: "self",
     renderCall(args: any, theme: any, context: any) {
-      if (renderMode === "clean" && !context.expanded) return activeToolCall(theme, "Bash", context.state);
+      if (renderMode === "clean" && !context.expanded) return cleanToolCall(theme, "Bash", context.toolCallId, context.state);
       const command = typeof args.command === "string" ? args.command : "";
       if (renderMode === "compact" && !context.expanded) {
         const commandLines = command.split(/\r\n|\r|\n/);
@@ -488,7 +555,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     ...edit,
     renderShell: "self",
     renderCall(args: any, theme: any, context: any) {
-      if (renderMode === "clean" && !context.expanded) return activeToolCall(theme, "Edit", context.state);
+      if (renderMode === "clean" && !context.expanded) return cleanToolCall(theme, "Edit", context.toolCallId, context.state);
       const count = Array.isArray(args.edits) ? ` · ${args.edits.length} changes` : "";
       return call(theme, "Edit", `${args.path}${count}`, context.state);
     },
@@ -529,7 +596,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     ...write,
     renderShell: "self",
     renderCall(args: any, theme: any, context: any) {
-      if (renderMode === "clean" && !context.expanded) return activeToolCall(theme, "Write", context.state);
+      if (renderMode === "clean" && !context.expanded) return cleanToolCall(theme, "Write", context.toolCallId, context.state);
       const content = typeof args.content === "string" ? args.content : "";
       return writeCall(theme, String(args.path ?? ""), content, context.expanded, context.state);
     },
@@ -553,7 +620,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     ...grep,
     renderShell: "self",
     renderCall(args: any, theme: any, context: any) {
-      if (renderMode === "clean" && !context.expanded) return activeToolCall(theme, "Grep", context.state);
+      if (renderMode === "clean" && !context.expanded) return cleanToolCall(theme, "Grep", context.toolCallId, context.state);
       const where = args.path ? ` · ${args.path}` : "";
       const glob = args.glob ? ` · ${args.glob}` : "";
       return call(theme, "Grep", `${args.pattern}${where}${glob}`, context.state);
@@ -573,7 +640,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     ...find,
     renderShell: "self",
     renderCall(args: any, theme: any, context: any) {
-      if (renderMode === "clean" && !context.expanded) return activeToolCall(theme, "Find", context.state);
+      if (renderMode === "clean" && !context.expanded) return cleanToolCall(theme, "Find", context.toolCallId, context.state);
       return call(theme, "Find", `${args.pattern}${args.path ? ` · ${args.path}` : ""}`, context.state);
     },
     renderResult(toolResult: any, options: any, theme: any, context: any) {
@@ -591,7 +658,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     ...ls,
     renderShell: "self",
     renderCall(args: any, theme: any, context: any) {
-      if (renderMode === "clean" && !context.expanded) return activeToolCall(theme, "List", context.state);
+      if (renderMode === "clean" && !context.expanded) return cleanToolCall(theme, "List", context.toolCallId, context.state);
       return call(theme, "List", args.path ?? ".", context.state);
     },
     renderResult(toolResult: any, options: any, theme: any, context: any) {
