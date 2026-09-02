@@ -52,7 +52,7 @@ Press `Ctrl+O` (Pi's default `app.tools.expand` keybinding) to show or hide deta
 
 ## Compatibility notice
 
-Tool rendering uses Pi's documented extension APIs. Clean thinking follows Pi's built-in tool-expansion state through the exported interactive-mode component. Changing unordered-list markers currently requires runtime patching of an internal `@earendil-works/pi-tui` Markdown renderer method because Pi does not expose a public hook for that presentation detail. Code blocks use Pi's original renderer without modification.
+Tool rendering uses Pi's documented extension APIs. Clean thinking and active-tool state follow Pi's built-in expansion and execution transitions through its exported interactive components. Changing unordered-list markers currently requires runtime patching of an internal `@earendil-works/pi-tui` Markdown renderer method because Pi does not expose a public hook for that presentation detail. Code blocks use Pi's original renderer without modification.
 
 No Pi source files are modified. The list-marker patch is removed during session shutdown, but a future Pi release may require this extension to be updated.
 

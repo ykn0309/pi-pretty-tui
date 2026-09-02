@@ -1,6 +1,7 @@
 import {
   AssistantMessageComponent,
   InteractiveMode,
+  ToolExecutionComponent,
   createBashTool,
   createEditTool,
   createFindTool,
@@ -133,10 +134,21 @@ export default function prettyTui(pi: ExtensionAPI) {
         (item.type === "thinking" && typeof item.thinking === "string" && item.thinking.trim()) ||
         item.type === "toolCall",
       );
-      const thinkingInProgress = isStreaming && !showThinking && lastVisibleContent?.type === "thinking";
+      const thinkingInProgress = isStreaming && !showThinking && (
+        lastVisibleContent?.type === "thinking" ||
+        (!lastVisibleContent && cleanRun.active && !cleanRun.activeToolCallId)
+      );
+      const hasThinkingContent = content.some(
+        (item: any) => item.type === "thinking" && typeof item.thinking === "string" && item.thinking.trim(),
+      );
       const displayMessage = !showThinking && !thinkingInProgress
         ? { ...message, content: content.filter((item: any) => item.type !== "thinking") }
-        : message;
+        : thinkingInProgress && !hasThinkingContent
+          // The stream can start before the first thinking chunk arrives. Add
+          // an invisible placeholder so Pi's normal hidden-block renderer can
+          // still display its single "Thinking..." label.
+          ? { ...message, content: [...content, { type: "thinking", thinking: "pending" }] }
+          : message;
       const previousHideThinkingBlock = this.hideThinkingBlock;
       // Only an active, collapsed thinking stream gets the progress label.
       // Once text or a tool call follows, remove the historical block instead
@@ -488,6 +500,8 @@ export default function prettyTui(pi: ExtensionAPI) {
   const settledSummaries = new Map<string, { count: number; failed: number }>();
   const legacySummaryLastToolCallIds = new Map<string, string>();
   const knownToolCallIds = new Set<string>();
+  const startedToolCallIds = new Set<string>();
+  const completedToolCallIds = new Set<string>();
   type CleanRunState = {
     activeToolCallId?: string;
     lastCompletedToolCallId?: string;
@@ -504,6 +518,41 @@ export default function prettyTui(pi: ExtensionAPI) {
     active: false,
     settled: false,
   };
+
+  // A tool component can be created from the streamed assistant message
+  // before Pi dispatches tool_execution_start. Mark it at the component's
+  // own execution boundary too, so the first render after start is full.
+  const toolExecutionPrototype = ToolExecutionComponent.prototype as any;
+  const toolExecutionPatchKey = Symbol.for("pretty-tui.clean-tool-execution");
+  if (!toolExecutionPrototype[toolExecutionPatchKey]) {
+    const originalMarkExecutionStarted = toolExecutionPrototype.markExecutionStarted;
+    const patchedMarkExecutionStarted = function (this: any) {
+      if (supportedTools.has(this.toolName)) {
+        startedToolCallIds.add(this.toolCallId);
+        completedToolCallIds.delete(this.toolCallId);
+        cleanRun.active = true;
+        cleanRun.activeToolCallId = this.toolCallId;
+      }
+      return originalMarkExecutionStarted.call(this);
+    };
+
+    toolExecutionPrototype[toolExecutionPatchKey] = {
+      originalMarkExecutionStarted,
+      patchedMarkExecutionStarted,
+    };
+    toolExecutionPrototype.markExecutionStarted = patchedMarkExecutionStarted;
+
+    pi.on("session_shutdown", () => {
+      const patch = toolExecutionPrototype[toolExecutionPatchKey];
+      if (!patch) return;
+      if (patch.patchedMarkExecutionStarted === toolExecutionPrototype.markExecutionStarted) {
+        toolExecutionPrototype.markExecutionStarted = patch.originalMarkExecutionStarted;
+      }
+      if (toolExecutionPrototype.markExecutionStarted === patch.originalMarkExecutionStarted) {
+        delete toolExecutionPrototype[toolExecutionPatchKey];
+      }
+    });
+  }
 
   const finishCleanGroup = () => {
     if (cleanRun.lastCompletedToolCallId && cleanRun.count > 0) {
@@ -586,8 +635,15 @@ export default function prettyTui(pi: ExtensionAPI) {
 
   // Keep the active supported tool in its normal renderer. Only completed
   // tools (and tool calls that have not started yet) use clean-mode hiding.
-  const hideCleanTool = (toolCallId: string, expanded: boolean): boolean =>
-    renderMode === "clean" && !expanded && cleanRun.activeToolCallId !== toolCallId;
+  const hideCleanTool = (
+    toolCallId: string,
+    expanded: boolean,
+    executionStarted = false,
+  ): boolean =>
+    renderMode === "clean" && !expanded && (
+      completedToolCallIds.has(toolCallId) ||
+      (!executionStarted && !startedToolCallIds.has(toolCallId))
+    );
 
   pi.registerEntryRenderer<ToolSummaryData>("pretty-tui-tool-summary", (entry, { expanded }, theme) => ({
     render(width: number): string[] {
@@ -621,6 +677,8 @@ export default function prettyTui(pi: ExtensionAPI) {
     cleanToolsExpanded = ctx.ui.getToolsExpanded();
     settledSummaries.clear();
     legacySummaryLastToolCallIds.clear();
+    startedToolCallIds.clear();
+    completedToolCallIds.clear();
     cleanRun.count = 0;
     cleanRun.failed = 0;
     cleanRun.groups = [];
@@ -754,11 +812,15 @@ export default function prettyTui(pi: ExtensionAPI) {
   });
   pi.on("tool_execution_start", (event) => {
     if (!supportedTools.has(event.toolName)) return;
+    startedToolCallIds.add(event.toolCallId);
+    completedToolCallIds.delete(event.toolCallId);
     cleanRun.active = true;
     cleanRun.activeToolCallId = event.toolCallId;
   });
   pi.on("tool_execution_end", (event) => {
     if (!supportedTools.has(event.toolName)) return;
+    startedToolCallIds.add(event.toolCallId);
+    completedToolCallIds.add(event.toolCallId);
     cleanRun.count++;
     if (event.isError) cleanRun.failed++;
     cleanRun.lastCompletedToolCallId = event.toolCallId;
@@ -797,7 +859,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     ...read,
     renderShell: "self",
     renderCall(args: any, theme: any, context: any) {
-      if (hideCleanTool(context.toolCallId, context.expanded)) return cleanToolCall(theme, "Read", context.toolCallId);
+      if (hideCleanTool(context.toolCallId, context.expanded, context.executionStarted)) return cleanToolCall(theme, "Read", context.toolCallId);
       const range = args.offset || args.limit
         ? ` · lines ${args.offset ?? 1}${args.limit ? `–${(args.offset ?? 1) + args.limit - 1}` : "+"}`
         : "";
@@ -805,7 +867,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     },
     renderResult(toolResult: any, options: any, theme: any, context: any) {
       const output = textContent(toolResult);
-      if (hideCleanTool(context.toolCallId, options.expanded)) return hiddenToolResult(context, options, output);
+      if (hideCleanTool(context.toolCallId, options.expanded, context.executionStarted)) return hiddenToolResult(context, options, output);
       if (options.isPartial) return partialResult(context, theme, "Reading…");
       const image = toolResult.content?.find((item: any) => item.type === "image");
       const failed = completeStatus(context, output);
@@ -827,7 +889,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     ...bash,
     renderShell: "self",
     renderCall(args: any, theme: any, context: any) {
-      if (hideCleanTool(context.toolCallId, context.expanded)) return cleanToolCall(theme, "Bash", context.toolCallId);
+      if (hideCleanTool(context.toolCallId, context.expanded, context.executionStarted)) return cleanToolCall(theme, "Bash", context.toolCallId);
       const command = typeof args.command === "string" ? args.command : "";
       if (renderMode === "compact" && !context.expanded) {
         const commandLines = command.split(/\r\n|\r|\n/);
@@ -842,7 +904,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     },
     renderResult(toolResult: any, options: any, theme: any, context: any) {
       const output = textContent(toolResult);
-      if (hideCleanTool(context.toolCallId, options.expanded)) return hiddenToolResult(context, options, output);
+      if (hideCleanTool(context.toolCallId, options.expanded, context.executionStarted)) return hiddenToolResult(context, options, output);
       if (renderMode === "compact" && !options.expanded) {
         if (options.isPartial) return partialResult(context, theme, "Running…");
         const failed = completeStatus(context, output);
@@ -877,13 +939,13 @@ export default function prettyTui(pi: ExtensionAPI) {
     ...edit,
     renderShell: "self",
     renderCall(args: any, theme: any, context: any) {
-      if (hideCleanTool(context.toolCallId, context.expanded)) return cleanToolCall(theme, "Edit", context.toolCallId);
+      if (hideCleanTool(context.toolCallId, context.expanded, context.executionStarted)) return cleanToolCall(theme, "Edit", context.toolCallId);
       const count = Array.isArray(args.edits) ? ` · ${args.edits.length} changes` : "";
       return call(theme, "Edit", `${args.path}${count}`, context.state);
     },
     renderResult(toolResult: any, options: any, theme: any, context: any) {
       const output = textContent(toolResult);
-      if (hideCleanTool(context.toolCallId, options.expanded)) return hiddenToolResult(context, options, output);
+      if (hideCleanTool(context.toolCallId, options.expanded, context.executionStarted)) return hiddenToolResult(context, options, output);
       if (options.isPartial) return partialResult(context, theme, "Editing…");
       const failed = completeStatus(context, output);
       const diff = toolResult.details?.diff ?? "";
@@ -918,13 +980,13 @@ export default function prettyTui(pi: ExtensionAPI) {
     ...write,
     renderShell: "self",
     renderCall(args: any, theme: any, context: any) {
-      if (hideCleanTool(context.toolCallId, context.expanded)) return cleanToolCall(theme, "Write", context.toolCallId);
+      if (hideCleanTool(context.toolCallId, context.expanded, context.executionStarted)) return cleanToolCall(theme, "Write", context.toolCallId);
       const content = typeof args.content === "string" ? args.content : "";
       return writeCall(theme, String(args.path ?? ""), content, context.expanded, context.state);
     },
     renderResult(toolResult: any, options: any, theme: any, context: any) {
       const output = textContent(toolResult);
-      if (hideCleanTool(context.toolCallId, options.expanded)) return hiddenToolResult(context, options, output);
+      if (hideCleanTool(context.toolCallId, options.expanded, context.executionStarted)) return hiddenToolResult(context, options, output);
       if (options.isPartial) return partialResult(context, theme, "Writing…");
       const failed = completeStatus(context, output);
       return result(
@@ -942,14 +1004,14 @@ export default function prettyTui(pi: ExtensionAPI) {
     ...grep,
     renderShell: "self",
     renderCall(args: any, theme: any, context: any) {
-      if (hideCleanTool(context.toolCallId, context.expanded)) return cleanToolCall(theme, "Grep", context.toolCallId);
+      if (hideCleanTool(context.toolCallId, context.expanded, context.executionStarted)) return cleanToolCall(theme, "Grep", context.toolCallId);
       const where = args.path ? ` · ${args.path}` : "";
       const glob = args.glob ? ` · ${args.glob}` : "";
       return call(theme, "Grep", `${args.pattern}${where}${glob}`, context.state);
     },
     renderResult(toolResult: any, options: any, theme: any, context: any) {
       const output = textContent(toolResult);
-      if (hideCleanTool(context.toolCallId, options.expanded)) return hiddenToolResult(context, options, output);
+      if (hideCleanTool(context.toolCallId, options.expanded, context.executionStarted)) return hiddenToolResult(context, options, output);
       if (options.isPartial) return partialResult(context, theme, "Searching…");
       const failed = completeStatus(context, output);
       const matches = nonEmptyLines(output);
@@ -962,12 +1024,12 @@ export default function prettyTui(pi: ExtensionAPI) {
     ...find,
     renderShell: "self",
     renderCall(args: any, theme: any, context: any) {
-      if (hideCleanTool(context.toolCallId, context.expanded)) return cleanToolCall(theme, "Find", context.toolCallId);
+      if (hideCleanTool(context.toolCallId, context.expanded, context.executionStarted)) return cleanToolCall(theme, "Find", context.toolCallId);
       return call(theme, "Find", `${args.pattern}${args.path ? ` · ${args.path}` : ""}`, context.state);
     },
     renderResult(toolResult: any, options: any, theme: any, context: any) {
       const output = textContent(toolResult);
-      if (hideCleanTool(context.toolCallId, options.expanded)) return hiddenToolResult(context, options, output);
+      if (hideCleanTool(context.toolCallId, options.expanded, context.executionStarted)) return hiddenToolResult(context, options, output);
       if (options.isPartial) return partialResult(context, theme, "Searching…");
       const failed = completeStatus(context, output);
       const matches = nonEmptyLines(output);
@@ -980,12 +1042,12 @@ export default function prettyTui(pi: ExtensionAPI) {
     ...ls,
     renderShell: "self",
     renderCall(args: any, theme: any, context: any) {
-      if (hideCleanTool(context.toolCallId, context.expanded)) return cleanToolCall(theme, "List", context.toolCallId);
+      if (hideCleanTool(context.toolCallId, context.expanded, context.executionStarted)) return cleanToolCall(theme, "List", context.toolCallId);
       return call(theme, "List", args.path ?? ".", context.state);
     },
     renderResult(toolResult: any, options: any, theme: any, context: any) {
       const output = textContent(toolResult);
-      if (hideCleanTool(context.toolCallId, options.expanded)) return hiddenToolResult(context, options, output);
+      if (hideCleanTool(context.toolCallId, options.expanded, context.executionStarted)) return hiddenToolResult(context, options, output);
       if (options.isPartial) return partialResult(context, theme, "Listing…");
       const failed = completeStatus(context, output);
       const entries = nonEmptyLines(output);
