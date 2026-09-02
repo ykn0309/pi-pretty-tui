@@ -374,7 +374,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     renderShell: "self",
     renderCall(args: any, theme: any, context: any) {
       const command = typeof args.command === "string" ? args.command : "";
-      if (bashMode === "compact") {
+      if (bashMode === "compact" && !context.expanded) {
         const commandLines = command.split(/\r\n|\r|\n/);
         const firstLine = commandLines[0] ?? "";
         const omitted = commandLines.length - 1;
@@ -387,7 +387,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     },
     renderResult(toolResult: any, options: any, theme: any, context: any) {
       const output = textContent(toolResult);
-      if (bashMode === "compact") {
+      if (bashMode === "compact" && !options.expanded) {
         if (options.isPartial) return partialResult(context, theme, "Running…");
         const failed = completeStatus(context, output);
         return result(theme, failed ? "Command failed" : "Done", "", false, failed);

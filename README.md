@@ -37,13 +37,13 @@ Run `/pretty-tui` to choose a mode interactively, or set one directly:
 ```
 
 - `full` (default): show the complete Bash command, the latest 5 output lines when collapsed, and all available output when expanded.
-- `compact`: show only the first command line plus an omitted-line count; show only `Running…`, `Done`, or `Command failed` for the result. Expanding does not reveal Bash output in this mode.
+- `compact`: when collapsed, show only the first command line plus an omitted-line count and only `Running…`, `Done`, or `Command failed` for the result. Press `Ctrl+O` to reveal the complete command and all available output.
 
 The selected mode applies immediately and persists in `~/.pi/agent/pretty-tui.json` (or the directory selected by `PI_CODING_AGENT_DIR`).
 
 ## Expand tool output
 
-Press `Ctrl+O` (Pi's default `app.tools.expand` keybinding) to show or hide detailed output, edit diffs, and complete `Write` content. Bash output is expandable only in `full` mode.
+Press `Ctrl+O` (Pi's default `app.tools.expand` keybinding) to show or hide detailed output, edit diffs, complete `Write` content, and the full Bash command and output in `compact` mode.
 
 ## Compatibility notice
 
