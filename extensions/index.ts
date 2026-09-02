@@ -22,6 +22,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 type PrettyTuiMode = "full" | "compact" | "clean";
+const CLEAN_TOOL_ACTIVITY_MIN_MS = 1000;
 type PrettyTuiConfig = {
   mode?: PrettyTuiMode;
   /** Legacy location used by the first mode implementation. */
@@ -482,7 +483,15 @@ export default function prettyTui(pi: ExtensionAPI) {
     groups?: ToolSummaryGroup[];
   };
   const supportedTools = new Set(["read", "bash", "edit", "write", "grep", "find", "ls"]);
-  const settledSummaries = new Map<string, { count: number; failed: number; activity: string }>();
+  type ToolActivityHold = {
+    toolCallId: string;
+    name: string;
+    until: number;
+    after: string;
+    timer?: ReturnType<typeof setTimeout>;
+  };
+  const settledSummaries = new Map<string, { count: number; failed: number; activity: DisplayValue }>();
+  const toolActivityHolds = new Map<string, ToolActivityHold>();
   const legacySummaryLastToolCallIds = new Map<string, string>();
   const knownToolCallIds = new Set<string>();
   type CleanRunState = {
@@ -490,6 +499,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     lastCompletedToolCallId?: string;
     activeToolName?: string;
     activity?: string;
+    requestRender?: () => void;
     count: number;
     failed: number;
     groups: ToolSummaryGroup[];
@@ -507,8 +517,85 @@ export default function prettyTui(pi: ExtensionAPI) {
   const toolDisplayName = (name: string): string =>
     name === "ls" ? "List" : name.charAt(0).toUpperCase() + name.slice(1);
 
-  const currentCleanActivity = (): string =>
-    cleanRun.activeToolName ?? cleanRun.activity ?? (cleanRun.active ? "thinking..." : "done");
+  const clearToolActivityHolds = () => {
+    for (const hold of toolActivityHolds.values()) {
+      if (hold.timer) clearTimeout(hold.timer);
+    }
+    toolActivityHolds.clear();
+  };
+
+  const heldActivity = (hold: ToolActivityHold): string =>
+    Date.now() < hold.until ? hold.name : hold.after;
+
+  const scheduleToolActivityRelease = (hold: ToolActivityHold) => {
+    if (hold.timer) clearTimeout(hold.timer);
+    const delay = Math.max(0, hold.until - Date.now());
+    hold.timer = setTimeout(() => {
+      hold.timer = undefined;
+      if (Date.now() < hold.until) {
+        scheduleToolActivityRelease(hold);
+        return;
+      }
+      if (toolActivityHolds.get(hold.toolCallId) === hold) {
+        toolActivityHolds.delete(hold.toolCallId);
+      }
+      if (cleanRun.lastCompletedToolCallId === hold.toolCallId && !cleanRun.activeToolCallId) {
+        cleanRun.activeToolName = undefined;
+        cleanRun.activity = hold.after;
+      }
+      cleanRun.requestRender?.();
+    }, delay);
+  };
+
+  const beginToolActivity = (toolCallId: string, name: string) => {
+    const previous = toolActivityHolds.get(toolCallId);
+    if (previous?.timer) clearTimeout(previous.timer);
+    const startedAt = Date.now();
+    toolActivityHolds.set(toolCallId, {
+      toolCallId,
+      name,
+      until: startedAt + CLEAN_TOOL_ACTIVITY_MIN_MS,
+      after: "thinking...",
+    });
+    cleanRun.activeToolName = name;
+    cleanRun.activity = name;
+  };
+
+  const holdToolActivity = (toolCallId: string, name: string) => {
+    let hold = toolActivityHolds.get(toolCallId);
+    if (!hold) {
+      const now = Date.now();
+      hold = {
+        toolCallId,
+        name,
+        until: now + CLEAN_TOOL_ACTIVITY_MIN_MS,
+        after: "thinking...",
+      };
+      toolActivityHolds.set(toolCallId, hold);
+    }
+    hold.after = "thinking...";
+    scheduleToolActivityRelease(hold);
+  };
+
+  const activityValueForHold = (toolCallId: string, after: string): DisplayValue => {
+    const hold = toolActivityHolds.get(toolCallId);
+    if (!hold) return after;
+    hold.after = after;
+    return () => heldActivity(hold);
+  };
+
+  const currentCleanActivity = (): string => {
+    if (cleanRun.activeToolCallId) {
+      return cleanRun.activeToolName ?? cleanRun.activity ?? "thinking...";
+    }
+    if (cleanRun.lastCompletedToolCallId) {
+      const hold = toolActivityHolds.get(cleanRun.lastCompletedToolCallId);
+      if (hold) return heldActivity(hold);
+    }
+    return cleanRun.activeToolName ?? cleanRun.activity ?? (cleanRun.active ? "thinking..." : "done");
+  };
+
+  pi.on("session_shutdown", clearToolActivityHolds);
 
   // A tool component can be created from the streamed assistant message
   // before Pi dispatches tool_execution_start. Mark its activity at the
@@ -519,10 +606,12 @@ export default function prettyTui(pi: ExtensionAPI) {
     const originalMarkExecutionStarted = toolExecutionPrototype.markExecutionStarted;
     const patchedMarkExecutionStarted = function (this: any) {
       if (supportedTools.has(this.toolName)) {
+        if (typeof this.ui?.requestRender === "function") {
+          cleanRun.requestRender = () => this.ui.requestRender();
+        }
         cleanRun.active = true;
         cleanRun.activeToolCallId = this.toolCallId;
-        cleanRun.activeToolName = toolDisplayName(this.toolName);
-        cleanRun.activity = cleanRun.activeToolName;
+        beginToolActivity(this.toolCallId, toolDisplayName(this.toolName));
       }
       return originalMarkExecutionStarted.call(this);
     };
@@ -557,7 +646,7 @@ export default function prettyTui(pi: ExtensionAPI) {
       settledSummaries.set(group.lastToolCallId, {
         count: group.count,
         failed: group.failed,
-        activity,
+        activity: activityValueForHold(group.lastToolCallId, activity),
       });
     }
     cleanRun.count = 0;
@@ -570,7 +659,9 @@ export default function prettyTui(pi: ExtensionAPI) {
   const summaryText = (count: number, failed: number, activity = "done"): string => {
     const activityText = typeof activity === "string" ? activity : "done";
     const countLabel = `${count} tool ${count === 1 ? "call" : "calls"}`;
-    const activityLabel = activityText.trim() ? ` · ${activityText}` : "";
+    const activityLabel = activityText !== "done" && activityText.trim()
+      ? ` · ${activityText}`
+      : "";
     const failedLabel = failed > 0 ? ` · ${failed} failed` : "";
     return `${countLabel}${activityLabel}${failedLabel}`;
   };
@@ -585,15 +676,17 @@ export default function prettyTui(pi: ExtensionAPI) {
     continuation: "  ",
     content: () => {
       const currentActivity = typeof activity === "function" ? activity() : activity;
-      return theme.fg("accent", theme.bold("Working")) + theme.fg("dim", "(") +
+      const label = currentActivity === "done" ? "Done" : "Working";
+      return theme.fg(label === "Done" ? "success" : "accent", theme.bold(label)) +
+        theme.fg("dim", "(") +
         theme.fg("text", summaryText(count, failed, currentActivity)) + theme.fg("dim", ")");
     },
   });
 
   /**
-   * Clean mode keeps Working rows in the existing tool components. This avoids
-   * waiting for agent_end (which can be followed by retry/compaction), leaves
-   * a visible count between calls, and keeps each row in transcript order.
+   * Clean mode keeps Working/Done rows in the existing tool components. This
+   * avoids waiting for agent_end (which can be followed by retry/compaction),
+   * leaves a visible count between calls, and keeps each row in transcript order.
    */
   const cleanToolCall = (theme: any, name: string, toolCallId: string): Component => {
     knownToolCallIds.add(toolCallId);
@@ -617,7 +710,7 @@ export default function prettyTui(pi: ExtensionAPI) {
         }
 
         // The active tool owns the live Working row. Keep the latest completed
-        // portion hidden while that tool renders its full call details.
+        // portion hidden while that tool's minimum display time is running.
         if (
           cleanRun.lastCompletedToolCallId === toolCallId &&
           cleanRun.count > 0 &&
@@ -688,6 +781,8 @@ export default function prettyTui(pi: ExtensionAPI) {
     cleanToolsExpanded = ctx.ui.getToolsExpanded();
     settledSummaries.clear();
     legacySummaryLastToolCallIds.clear();
+    clearToolActivityHolds();
+    cleanRun.requestRender = undefined;
     cleanRun.count = 0;
     cleanRun.failed = 0;
     cleanRun.groups = [];
@@ -832,11 +927,16 @@ export default function prettyTui(pi: ExtensionAPI) {
     if (!supportedTools.has(event.toolName)) return;
     cleanRun.active = true;
     cleanRun.activeToolCallId = event.toolCallId;
-    cleanRun.activeToolName = toolDisplayName(event.toolName);
-    cleanRun.activity = cleanRun.activeToolName;
+    beginToolActivity(event.toolCallId, toolDisplayName(event.toolName));
   });
   pi.on("tool_execution_end", (event) => {
     if (!supportedTools.has(event.toolName)) return;
+    const activityName = cleanRun.activeToolCallId === event.toolCallId
+      ? cleanRun.activeToolName ?? toolDisplayName(event.toolName)
+      : toolDisplayName(event.toolName);
+    // Keep the tool activity visible until at least one second after start;
+    // this only delays the status transition, never the tool result itself.
+    holdToolActivity(event.toolCallId, activityName);
     cleanRun.count++;
     if (event.isError) cleanRun.failed++;
     cleanRun.lastCompletedToolCallId = event.toolCallId;
@@ -863,7 +963,7 @@ export default function prettyTui(pi: ExtensionAPI) {
       settledSummaries.set(group.lastToolCallId, {
         count: group.count,
         failed: group.failed,
-        activity: "done",
+        activity: activityValueForHold(group.lastToolCallId, "done"),
       });
     }
     cleanRun.active = false;

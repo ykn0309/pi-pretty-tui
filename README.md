@@ -40,7 +40,7 @@ Run `/pretty-tui` to choose a mode interactively, or set one directly:
 
 - `full` (default): show the complete Bash command, the latest 5 output lines when collapsed, and all available output when expanded.
 - `compact`: when collapsed, show only the first Bash command line plus an omitted-line count and only `Running…`, `Done`, or `Command failed` for the result. Press `Ctrl+O` to reveal the complete command and all available output.
-- `clean`: collapse supported tool calls into a single `Working(...)` status; while a tool is running, the activity slot shows its name, such as `Working(3 tool calls · Read)`, then changes to `thinking...` or `done`. Visible assistant text starts a new tool group, so later calls get a separate status. Collapsed thinking blocks stay hidden without Pi's `Thinking...` placeholder; press `Ctrl+O` to reveal thinking content and normal expanded tool calls/output in transcript order.
+- `clean`: collapse supported tool calls into a single `Working(...)` status; while a tool is running, the activity slot shows its name, such as `Working(3 tool calls · Read)`, and remains visible for at least 1 second before changing to `thinking...`. Once settled, the label becomes `Done(...)`. Visible assistant text starts a new tool group, so later calls get a separate status. Collapsed thinking blocks stay hidden without Pi's `Thinking...` placeholder; press `Ctrl+O` to reveal thinking content and normal expanded tool calls/output in transcript order.
 
 Clean mode covers the built-in tools managed by this package: `read`, `bash`, `edit`, `write`, `grep`, `find`, and `ls`. Third-party tools keep their own rendering.
 
