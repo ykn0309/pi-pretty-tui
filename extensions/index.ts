@@ -1,4 +1,6 @@
 import {
+  AssistantMessageComponent,
+  InteractiveMode,
   createBashTool,
   createEditTool,
   createFindTool,
@@ -45,6 +47,7 @@ export default function prettyTui(pi: ExtensionAPI) {
   let renderMode: PrettyTuiMode = configuredMode === "compact" || configuredMode === "clean"
     ? configuredMode
     : "full";
+  let cleanToolsExpanded = false;
 
   const saveRenderMode = (mode: PrettyTuiMode) => {
     config = { ...config, mode };
@@ -99,6 +102,127 @@ export default function prettyTui(pi: ExtensionAPI) {
       }
     },
   });
+
+  // Pi's built-in assistant component turns hidden thinking into a static
+  // "Thinking..." label. In clean mode, completed messages should omit that
+  // block entirely, while an active stream still gets the progress label. The
+  // component is exported by Pi specifically for extension-level rendering
+  // customizations, so patch its public methods rather than Pi's source.
+  const assistantPrototype = AssistantMessageComponent.prototype as any;
+  const thinkingPatchKey = Symbol.for("pretty-tui.clean-thinking");
+  if (!assistantPrototype[thinkingPatchKey]) {
+    const originalUpdateContent = assistantPrototype.updateContent;
+    const originalRender = assistantPrototype.render;
+    const originalMessageKey = Symbol("pretty-tui.original-assistant-message");
+    const renderedModeKey = Symbol("pretty-tui.rendered-assistant-mode");
+    const renderedExpansionKey = Symbol("pretty-tui.rendered-thinking-expansion");
+
+    const patchedUpdateContent = function (this: any, message: any, isStreaming = this.isStreaming) {
+      if (renderMode !== "clean") {
+        originalUpdateContent.call(this, message, isStreaming);
+        this[originalMessageKey] = message;
+        this[renderedModeKey] = renderMode;
+        this[renderedExpansionKey] = undefined;
+        return;
+      }
+
+      const showThinking = cleanToolsExpanded;
+      const content = Array.isArray(message?.content) ? message.content : [];
+      const lastVisibleContent = [...content].reverse().find((item: any) =>
+        (item.type === "text" && typeof item.text === "string" && item.text.trim()) ||
+        (item.type === "thinking" && typeof item.thinking === "string" && item.thinking.trim()) ||
+        item.type === "toolCall",
+      );
+      const thinkingInProgress = isStreaming && !showThinking && lastVisibleContent?.type === "thinking";
+      const displayMessage = !showThinking && !thinkingInProgress
+        ? { ...message, content: content.filter((item: any) => item.type !== "thinking") }
+        : message;
+      const previousHideThinkingBlock = this.hideThinkingBlock;
+      // Only an active, collapsed thinking stream gets the progress label.
+      // Once text or a tool call follows, remove the historical block instead
+      // of leaving a stale "Thinking..." label beside the response.
+      this.hideThinkingBlock = thinkingInProgress;
+      try {
+        originalUpdateContent.call(this, displayMessage, isStreaming);
+      } finally {
+        this.hideThinkingBlock = previousHideThinkingBlock;
+      }
+
+      // Pi's invalidate()/setHideThinkingBlock() call updateContent with
+      // lastMessage, so retain the unfiltered message for later mode changes.
+      this[originalMessageKey] = message;
+      this[renderedModeKey] = renderMode;
+      this[renderedExpansionKey] = showThinking;
+      this.lastMessage = message;
+    };
+
+    const patchedRender = function (this: any, width: number): string[] {
+      const needsRefresh = this[originalMessageKey] && (
+        this[renderedModeKey] !== renderMode ||
+        (renderMode === "clean" && this[renderedExpansionKey] !== cleanToolsExpanded)
+      );
+      if (needsRefresh) {
+        patchedUpdateContent.call(this, this[originalMessageKey], this.isStreaming);
+      }
+      return originalRender.call(this, width);
+    };
+
+    assistantPrototype[thinkingPatchKey] = {
+      originalUpdateContent,
+      patchedUpdateContent,
+      originalRender,
+      patchedRender,
+    };
+    assistantPrototype.updateContent = patchedUpdateContent;
+    assistantPrototype.render = patchedRender;
+
+    pi.on("session_shutdown", () => {
+      const patch = assistantPrototype[thinkingPatchKey];
+      if (!patch) return;
+      if (patch.patchedUpdateContent === assistantPrototype.updateContent) {
+        assistantPrototype.updateContent = patch.originalUpdateContent;
+      }
+      if (patch.patchedRender === assistantPrototype.render) {
+        assistantPrototype.render = patch.originalRender;
+      }
+      if (
+        assistantPrototype.updateContent === patch.originalUpdateContent &&
+        assistantPrototype.render === patch.originalRender
+      ) {
+        delete assistantPrototype[thinkingPatchKey];
+      }
+    });
+  }
+
+  // Extension shortcuts cannot replace Pi's built-in Ctrl+O binding. Wrap
+  // the exported state transition instead, so both Ctrl+O and UI callers keep
+  // their normal behavior while clean thinking follows the same state.
+  const interactiveModePrototype = InteractiveMode.prototype as any;
+  const toolsExpansionPatchKey = Symbol.for("pretty-tui.clean-tool-expansion");
+  if (!interactiveModePrototype[toolsExpansionPatchKey]) {
+    const originalSetToolsExpanded = interactiveModePrototype.setToolsExpanded;
+    const patchedSetToolsExpanded = function (this: any, expanded: boolean) {
+      cleanToolsExpanded = expanded;
+      return originalSetToolsExpanded.call(this, expanded);
+    };
+
+    interactiveModePrototype[toolsExpansionPatchKey] = {
+      originalSetToolsExpanded,
+      patchedSetToolsExpanded,
+    };
+    interactiveModePrototype.setToolsExpanded = patchedSetToolsExpanded;
+
+    pi.on("session_shutdown", () => {
+      const patch = interactiveModePrototype[toolsExpansionPatchKey];
+      if (!patch) return;
+      if (patch.patchedSetToolsExpanded === interactiveModePrototype.setToolsExpanded) {
+        interactiveModePrototype.setToolsExpanded = patch.originalSetToolsExpanded;
+      }
+      if (interactiveModePrototype.setToolsExpanded === patch.originalSetToolsExpanded) {
+        delete interactiveModePrototype[toolsExpansionPatchKey];
+      }
+    });
+  }
 
   // Pi normalizes unordered-list markers to "-". Replace only that marker;
   // leave code-block rendering entirely to Pi's built-in Markdown renderer.
@@ -347,11 +471,18 @@ export default function prettyTui(pi: ExtensionAPI) {
     return failed;
   };
 
-  type ToolSummaryData = {
+  type ToolSummaryGroup = {
     count: number;
     failed: number;
-    /** Identifies the tool component that should display the persisted summary. */
+    lastToolCallId: string;
+  };
+  type ToolSummaryData = {
+    count?: number;
+    failed?: number;
+    /** Identifies the last tool component for older single-group entries. */
     lastToolCallId?: string;
+    /** All groups from a run, used to restore summaries after reload. */
+    groups?: ToolSummaryGroup[];
   };
   const supportedTools = new Set(["read", "bash", "edit", "write", "grep", "find", "ls"]);
   const settledSummaries = new Map<string, { count: number; failed: number }>();
@@ -362,14 +493,35 @@ export default function prettyTui(pi: ExtensionAPI) {
     lastCompletedToolCallId?: string;
     count: number;
     failed: number;
+    groups: ToolSummaryGroup[];
     active: boolean;
     settled: boolean;
   };
   const cleanRun: CleanRunState = {
     count: 0,
     failed: 0,
+    groups: [],
     active: false,
     settled: false,
+  };
+
+  const finishCleanGroup = () => {
+    if (cleanRun.lastCompletedToolCallId && cleanRun.count > 0) {
+      const group: ToolSummaryGroup = {
+        count: cleanRun.count,
+        failed: cleanRun.failed,
+        lastToolCallId: cleanRun.lastCompletedToolCallId,
+      };
+      cleanRun.groups.push(group);
+      settledSummaries.set(group.lastToolCallId, {
+        count: group.count,
+        failed: group.failed,
+      });
+    }
+    cleanRun.count = 0;
+    cleanRun.failed = 0;
+    cleanRun.lastCompletedToolCallId = undefined;
+    cleanRun.activeToolCallId = undefined;
   };
 
   const summaryText = (count: number, failed: number): string => {
@@ -432,32 +584,65 @@ export default function prettyTui(pi: ExtensionAPI) {
   pi.registerEntryRenderer<ToolSummaryData>("pretty-tui-tool-summary", (entry, { expanded }, theme) => ({
     render(width: number): string[] {
       if (renderMode !== "clean" || expanded) return [];
-      const count = entry.data?.count ?? 0;
-      const failed = entry.data?.failed ?? 0;
-      // The live tool component owns the visual position. Keep this durable
-      // entry as a fallback for sessions where the corresponding tool call
-      // was removed by compaction or is not present in the current branch.
-      const summaryCallId = entry.data?.lastToolCallId ?? legacySummaryLastToolCallIds.get(entry.id);
-      if (summaryCallId && knownToolCallIds.has(summaryCallId)) return [];
-      if (!summaryCallId) return [];
-      return block([summaryRow(theme, count, failed)]).render(width);
+      const data = entry.data;
+      const groups = data?.groups?.length
+        ? data.groups
+        : data?.lastToolCallId
+          ? [{
+              count: data.count ?? 0,
+              failed: data.failed ?? 0,
+              lastToolCallId: data.lastToolCallId,
+            }]
+          : (() => {
+              const summaryCallId = legacySummaryLastToolCallIds.get(entry.id);
+              return summaryCallId
+                ? [{ count: data?.count ?? 0, failed: data?.failed ?? 0, lastToolCallId: summaryCallId }]
+                : [];
+            })();
+      // The live tool components own the visual positions. Keep this durable
+      // entry as a fallback only for groups whose tool components are absent
+      // from the current branch (for example, after compaction).
+      const missingGroups = groups.filter((group) => !knownToolCallIds.has(group.lastToolCallId));
+      if (missingGroups.length === 0) return [];
+      return block(missingGroups.map((group) => summaryRow(theme, group.count, group.failed))).render(width);
     },
     invalidate() {},
   }));
 
   pi.on("session_start", (_event, ctx) => {
+    cleanToolsExpanded = ctx.ui.getToolsExpanded();
     settledSummaries.clear();
     legacySummaryLastToolCallIds.clear();
+    cleanRun.count = 0;
+    cleanRun.failed = 0;
+    cleanRun.groups = [];
+    cleanRun.activeToolCallId = undefined;
+    cleanRun.lastCompletedToolCallId = undefined;
+    cleanRun.active = false;
+    cleanRun.settled = false;
 
     let count = 0;
     let failed = 0;
     let lastToolCallId: string | undefined;
+    let lastFinishedGroup: ToolSummaryGroup | undefined;
     const toolCalls = new Set<string>();
     const explicitSummaryIds = new Set<string>();
 
+    const rememberGroup = (group: ToolSummaryGroup, entryId?: string) => {
+      settledSummaries.set(group.lastToolCallId, {
+        count: group.count,
+        failed: group.failed,
+      });
+      if (entryId) legacySummaryLastToolCallIds.set(entryId, group.lastToolCallId);
+      explicitSummaryIds.add(group.lastToolCallId);
+    };
+
     const finishGroup = () => {
-      if (lastToolCallId && count > 0 && !explicitSummaryIds.has(lastToolCallId)) {
-        settledSummaries.set(lastToolCallId, { count, failed });
+      if (lastToolCallId && count > 0) {
+        lastFinishedGroup = { count, failed, lastToolCallId };
+        if (!explicitSummaryIds.has(lastToolCallId)) {
+          settledSummaries.set(lastToolCallId, { count, failed });
+        }
       }
       count = 0;
       failed = 0;
@@ -470,21 +655,32 @@ export default function prettyTui(pi: ExtensionAPI) {
     for (const entry of ctx.sessionManager.buildContextEntries()) {
       if (entry.type === "custom" && entry.customType === "pretty-tui-tool-summary") {
         const data = entry.data as ToolSummaryData | undefined;
-        if (data?.lastToolCallId) {
-          explicitSummaryIds.add(data.lastToolCallId);
-          settledSummaries.set(data.lastToolCallId, {
+        if (data?.groups?.length) {
+          for (const group of data.groups) {
+            if (group?.lastToolCallId && group.count > 0) rememberGroup(group);
+          }
+        } else if (data?.lastToolCallId) {
+          rememberGroup({
             count: data.count ?? 0,
             failed: data.failed ?? 0,
+            lastToolCallId: data.lastToolCallId,
           });
-        } else if (lastToolCallId && count > 0) {
+        } else if (lastFinishedGroup) {
           // Migrate summaries written by the earlier clean-mode versions,
-          // which did not persist the final tool call id.
-          settledSummaries.set(lastToolCallId, {
+          // which did not persist the final tool call id. The text message
+          // preceding this entry has already closed the group.
+          rememberGroup({
+            count: data?.count ?? lastFinishedGroup.count,
+            failed: data?.failed ?? lastFinishedGroup.failed,
+            lastToolCallId: lastFinishedGroup.lastToolCallId,
+          }, entry.id);
+        } else if (lastToolCallId && count > 0) {
+          // Also handle a legacy entry inserted before the boundary text.
+          rememberGroup({
             count: data?.count ?? count,
             failed: data?.failed ?? failed,
-          });
-          legacySummaryLastToolCallIds.set(entry.id, lastToolCallId);
-          explicitSummaryIds.add(lastToolCallId);
+            lastToolCallId,
+          }, entry.id);
         }
         continue;
       }
@@ -494,10 +690,15 @@ export default function prettyTui(pi: ExtensionAPI) {
 
       if (message.role === "user") {
         finishGroup();
+        lastFinishedGroup = undefined;
         continue;
       }
 
       if (message.role === "assistant") {
+        const hasVisibleText = (message.content ?? []).some(
+          (item: any) => item.type === "text" && typeof item.text === "string" && item.text.trim().length > 0,
+        );
+        if (hasVisibleText) finishGroup();
         for (const item of message.content ?? []) {
           if (item.type !== "toolCall" || !supportedTools.has(item.name)) continue;
           count++;
@@ -515,12 +716,28 @@ export default function prettyTui(pi: ExtensionAPI) {
     finishGroup();
   });
 
+  const hasVisibleAssistantText = (message: any): boolean =>
+    message?.role === "assistant" && (message.content ?? []).some(
+      (item: any) => item.type === "text" && typeof item.text === "string" && item.text.trim().length > 0,
+    );
+
+  // A visible assistant response is the boundary between tool groups. Do
+  // this during streaming so a following tool call cannot inherit the prior
+  // summary, while message_end keeps the rule correct for non-streaming paths.
+  pi.on("message_update", (event) => {
+    if (hasVisibleAssistantText(event.message)) finishCleanGroup();
+  });
+  pi.on("message_end", (event) => {
+    if (hasVisibleAssistantText(event.message)) finishCleanGroup();
+  });
+
   pi.on("agent_start", () => {
     // A retry can start another low-level agent loop. Keep the accumulated
     // count until the whole run reaches agent_settled.
     if (!cleanRun.active) {
       cleanRun.count = 0;
       cleanRun.failed = 0;
+      cleanRun.groups = [];
       cleanRun.lastCompletedToolCallId = undefined;
       cleanRun.settled = false;
     }
@@ -545,22 +762,26 @@ export default function prettyTui(pi: ExtensionAPI) {
     cleanRun.activeToolCallId = undefined;
   });
   pi.on("agent_settled", () => {
+    if (cleanRun.settled) return;
+
+    // Finalize the last group after retries/compaction have definitely ended.
+    finishCleanGroup();
     cleanRun.active = false;
     cleanRun.activeToolCallId = undefined;
     cleanRun.settled = true;
-    if (cleanRun.count > 0 && cleanRun.lastCompletedToolCallId) {
-      settledSummaries.set(cleanRun.lastCompletedToolCallId, {
-        count: cleanRun.count,
-        failed: cleanRun.failed,
-      });
-    }
-    if (renderMode === "clean" && cleanRun.count > 0) {
-      pi.appendEntry<ToolSummaryData>("pretty-tui-tool-summary", {
-        count: cleanRun.count,
-        failed: cleanRun.failed,
-        lastToolCallId: cleanRun.lastCompletedToolCallId,
-      });
-    }
+
+    const groups = cleanRun.groups.slice();
+    if (renderMode !== "clean" || groups.length === 0) return;
+
+    const count = groups.reduce((total, group) => total + group.count, 0);
+    const failed = groups.reduce((total, group) => total + group.failed, 0);
+    const lastToolCallId = groups[groups.length - 1]?.lastToolCallId;
+    pi.appendEntry<ToolSummaryData>("pretty-tui-tool-summary", {
+      count,
+      failed,
+      lastToolCallId,
+      groups,
+    });
   });
 
   const read = createReadTool(cwd);

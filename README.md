@@ -12,6 +12,7 @@ A visual refinement extension for the [Pi coding agent](https://pi.dev/). It pro
 - Native-style `Write` previews: first 10 lines when collapsed, full content when expanded
 - Live `Bash` output: latest 5 lines when collapsed, all available output when expanded
 - Switchable `full`, `compact`, and `clean` rendering modes with persistent settings
+- Clean mode hides completed thinking blocks, shows `Thinking...` only during active thinking, and reveals the original thinking content when expanded
 - Colored `+added` and `-removed` edit statistics and diffs
 - Correct hanging indentation for long paths and wrapped tool output
 - Bullet (`•`) markers for unordered Markdown lists
@@ -39,7 +40,7 @@ Run `/pretty-tui` to choose a mode interactively, or set one directly:
 
 - `full` (default): show the complete Bash command, the latest 5 output lines when collapsed, and all available output when expanded.
 - `compact`: when collapsed, show only the first Bash command line plus an omitted-line count and only `Running…`, `Done`, or `Command failed` for the result. Press `Ctrl+O` to reveal the complete command and all available output.
-- `clean`: while a supported tool is running, show only its name. After each completion, keep a live summary such as `Tools(5 tool calls)` visible while the model continues thinking; after the agent run settles, the summary is persisted. Press `Ctrl+O` to hide the summary and reveal the normal expanded tool calls and output.
+- `clean`: while a supported tool is running, show only its name. After each completion, keep a live summary such as `Tools(5 tool calls)` visible while the model continues thinking; after the agent run settles, the summary is persisted. Visible assistant text starts a new tool group, so later calls get a separate summary. Completed thinking blocks stay hidden, while active thinking shows `Thinking...`; press `Ctrl+O` to reveal thinking content and normal expanded tool calls/output in transcript order.
 
 Clean mode covers the built-in tools managed by this package: `read`, `bash`, `edit`, `write`, `grep`, `find`, and `ls`. Third-party tools keep their own rendering.
 
@@ -47,11 +48,11 @@ The selected mode applies immediately and persists in `~/.pi/agent/pretty-tui.js
 
 ## Expand tool output
 
-Press `Ctrl+O` (Pi's default `app.tools.expand` keybinding) to show or hide detailed output, edit diffs, complete `Write` content, and full tool details in `compact` or `clean` mode.
+Press `Ctrl+O` (Pi's default `app.tools.expand` keybinding) to show or hide detailed output, edit diffs, complete `Write` content, full tool details, and thinking content in `compact` or `clean` mode.
 
 ## Compatibility notice
 
-Tool rendering uses Pi's documented extension APIs. Changing unordered-list markers currently requires runtime patching of an internal `@earendil-works/pi-tui` Markdown renderer method because Pi does not expose a public hook for that presentation detail. Code blocks use Pi's original renderer without modification.
+Tool rendering uses Pi's documented extension APIs. Clean thinking follows Pi's built-in tool-expansion state through the exported interactive-mode component. Changing unordered-list markers currently requires runtime patching of an internal `@earendil-works/pi-tui` Markdown renderer method because Pi does not expose a public hook for that presentation detail. Code blocks use Pi's original renderer without modification.
 
 No Pi source files are modified. The list-marker patch is removed during session shutdown, but a future Pi release may require this extension to be updated.
 
