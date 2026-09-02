@@ -355,6 +355,7 @@ export default function prettyTui(pi: ExtensionAPI) {
   };
   const supportedTools = new Set(["read", "bash", "edit", "write", "grep", "find", "ls"]);
   const settledSummaries = new Map<string, { count: number; failed: number }>();
+  const legacySummaryLastToolCallIds = new Map<string, string>();
   const knownToolCallIds = new Set<string>();
   type CleanRunState = {
     activeToolCallId?: string;
@@ -436,23 +437,82 @@ export default function prettyTui(pi: ExtensionAPI) {
       // The live tool component owns the visual position. Keep this durable
       // entry as a fallback for sessions where the corresponding tool call
       // was removed by compaction or is not present in the current branch.
-      if (entry.data?.lastToolCallId && knownToolCallIds.has(entry.data.lastToolCallId)) return [];
-      if (!entry.data?.lastToolCallId) return [];
+      const summaryCallId = entry.data?.lastToolCallId ?? legacySummaryLastToolCallIds.get(entry.id);
+      if (summaryCallId && knownToolCallIds.has(summaryCallId)) return [];
+      if (!summaryCallId) return [];
       return block([summaryRow(theme, count, failed)]).render(width);
     },
     invalidate() {},
   }));
 
   pi.on("session_start", (_event, ctx) => {
-    for (const entry of ctx.sessionManager.getEntries()) {
-      if (entry.type !== "custom" || entry.customType !== "pretty-tui-tool-summary") continue;
-      const data = entry.data as ToolSummaryData | undefined;
-      if (!data?.lastToolCallId) continue;
-      settledSummaries.set(data.lastToolCallId, {
-        count: data.count ?? 0,
-        failed: data.failed ?? 0,
-      });
+    settledSummaries.clear();
+    legacySummaryLastToolCallIds.clear();
+
+    let count = 0;
+    let failed = 0;
+    let lastToolCallId: string | undefined;
+    const toolCalls = new Set<string>();
+    const explicitSummaryIds = new Set<string>();
+
+    const finishGroup = () => {
+      if (lastToolCallId && count > 0 && !explicitSummaryIds.has(lastToolCallId)) {
+        settledSummaries.set(lastToolCallId, { count, failed });
+      }
+      count = 0;
+      failed = 0;
+      lastToolCallId = undefined;
+      toolCalls.clear();
+    };
+
+    // Use the same compaction-aware branch that Pi renders in the transcript;
+    // getEntries() can also contain entries from other branches.
+    for (const entry of ctx.sessionManager.buildContextEntries()) {
+      if (entry.type === "custom" && entry.customType === "pretty-tui-tool-summary") {
+        const data = entry.data as ToolSummaryData | undefined;
+        if (data?.lastToolCallId) {
+          explicitSummaryIds.add(data.lastToolCallId);
+          settledSummaries.set(data.lastToolCallId, {
+            count: data.count ?? 0,
+            failed: data.failed ?? 0,
+          });
+        } else if (lastToolCallId && count > 0) {
+          // Migrate summaries written by the earlier clean-mode versions,
+          // which did not persist the final tool call id.
+          settledSummaries.set(lastToolCallId, {
+            count: data?.count ?? count,
+            failed: data?.failed ?? failed,
+          });
+          legacySummaryLastToolCallIds.set(entry.id, lastToolCallId);
+          explicitSummaryIds.add(lastToolCallId);
+        }
+        continue;
+      }
+
+      if (entry.type !== "message") continue;
+      const message = entry.message as any;
+
+      if (message.role === "user") {
+        finishGroup();
+        continue;
+      }
+
+      if (message.role === "assistant") {
+        for (const item of message.content ?? []) {
+          if (item.type !== "toolCall" || !supportedTools.has(item.name)) continue;
+          count++;
+          lastToolCallId = item.id;
+          toolCalls.add(item.id);
+        }
+        continue;
+      }
+
+      if (message.role === "toolResult" && toolCalls.has(message.toolCallId) && message.isError) {
+        failed++;
+      }
     }
+
+    finishGroup();
   });
 
   pi.on("agent_start", () => {
