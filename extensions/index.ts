@@ -347,8 +347,15 @@ export default function prettyTui(pi: ExtensionAPI) {
     return failed;
   };
 
-  type ToolSummaryData = { count: number; failed: number };
+  type ToolSummaryData = {
+    count: number;
+    failed: number;
+    /** Identifies the tool component that should display the persisted summary. */
+    lastToolCallId?: string;
+  };
   const supportedTools = new Set(["read", "bash", "edit", "write", "grep", "find", "ls"]);
+  const settledSummaries = new Map<string, { count: number; failed: number }>();
+  const knownToolCallIds = new Set<string>();
   type CleanRunState = {
     activeToolCallId?: string;
     lastCompletedToolCallId?: string;
@@ -381,30 +388,39 @@ export default function prettyTui(pi: ExtensionAPI) {
    * waiting for agent_end (which can be followed by retry/compaction) and also
    * leaves a visible count while the model is thinking between tool calls.
    */
-  const cleanToolCall = (theme: any, name: string, toolCallId: string): Component => ({
-    render(width: number): string[] {
-      if (renderMode !== "clean" || cleanRun.settled) return [];
+  const cleanToolCall = (theme: any, name: string, toolCallId: string): Component => {
+    knownToolCallIds.add(toolCallId);
+    return {
+      render(width: number): string[] {
+        if (renderMode !== "clean") return [];
 
-      if (cleanRun.activeToolCallId === toolCallId) {
-        return block([{
-          prefix: theme.fg("dim", "● "),
-          continuation: "  ",
-          content: theme.fg("accent", theme.bold(name)) + theme.fg("muted", "…"),
-        }]).render(width);
-      }
+        const settledSummary = settledSummaries.get(toolCallId);
+        if (settledSummary) {
+          return block([summaryRow(theme, settledSummary.count, settledSummary.failed)]).render(width);
+        }
+        if (cleanRun.settled) return [];
 
-      if (!cleanRun.activeToolCallId && cleanRun.lastCompletedToolCallId === toolCallId && cleanRun.count > 0) {
-        return block([summaryRow(theme, cleanRun.count, cleanRun.failed)]).render(width);
-      }
+        if (cleanRun.activeToolCallId === toolCallId) {
+          return block([{
+            prefix: theme.fg("dim", "● "),
+            continuation: "  ",
+            content: theme.fg("accent", theme.bold(name)) + theme.fg("muted", "…"),
+          }]).render(width);
+        }
 
-      // Do not fall back to the per-component pending state here: Pi may
-      // create several tool-call components before execution starts, and
-      // showing that fallback would briefly expose all of them. The
-      // tool_execution_start event selects the single active row.
-      return [];
-    },
-    invalidate() {},
-  });
+        if (!cleanRun.activeToolCallId && cleanRun.lastCompletedToolCallId === toolCallId && cleanRun.count > 0) {
+          return block([summaryRow(theme, cleanRun.count, cleanRun.failed)]).render(width);
+        }
+
+        // Do not fall back to the per-component pending state here: Pi may
+        // create several tool-call components before execution starts, and
+        // showing that fallback would briefly expose all of them. The
+        // tool_execution_start event selects the single active row.
+        return [];
+      },
+      invalidate() {},
+    };
+  };
 
   const hiddenToolResult = (context: any, options: any, output: string): Component => {
     if (options.isPartial) setStatus(context, "running");
@@ -417,10 +433,27 @@ export default function prettyTui(pi: ExtensionAPI) {
       if (renderMode !== "clean" || expanded) return [];
       const count = entry.data?.count ?? 0;
       const failed = entry.data?.failed ?? 0;
+      // The live tool component owns the visual position. Keep this durable
+      // entry as a fallback for sessions where the corresponding tool call
+      // was removed by compaction or is not present in the current branch.
+      if (entry.data?.lastToolCallId && knownToolCallIds.has(entry.data.lastToolCallId)) return [];
+      if (!entry.data?.lastToolCallId) return [];
       return block([summaryRow(theme, count, failed)]).render(width);
     },
     invalidate() {},
   }));
+
+  pi.on("session_start", (_event, ctx) => {
+    for (const entry of ctx.sessionManager.getEntries()) {
+      if (entry.type !== "custom" || entry.customType !== "pretty-tui-tool-summary") continue;
+      const data = entry.data as ToolSummaryData | undefined;
+      if (!data?.lastToolCallId) continue;
+      settledSummaries.set(data.lastToolCallId, {
+        count: data.count ?? 0,
+        failed: data.failed ?? 0,
+      });
+    }
+  });
 
   pi.on("agent_start", () => {
     // A retry can start another low-level agent loop. Keep the accumulated
@@ -455,10 +488,17 @@ export default function prettyTui(pi: ExtensionAPI) {
     cleanRun.active = false;
     cleanRun.activeToolCallId = undefined;
     cleanRun.settled = true;
+    if (cleanRun.count > 0 && cleanRun.lastCompletedToolCallId) {
+      settledSummaries.set(cleanRun.lastCompletedToolCallId, {
+        count: cleanRun.count,
+        failed: cleanRun.failed,
+      });
+    }
     if (renderMode === "clean" && cleanRun.count > 0) {
       pi.appendEntry<ToolSummaryData>("pretty-tui-tool-summary", {
         count: cleanRun.count,
         failed: cleanRun.failed,
+        lastToolCallId: cleanRun.lastCompletedToolCallId,
       });
     }
   });
