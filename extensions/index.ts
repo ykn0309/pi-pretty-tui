@@ -1,4 +1,3 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   createBashTool,
   createEditTool,
@@ -7,6 +6,8 @@ import {
   createLsTool,
   createReadTool,
   createWriteTool,
+  getAgentDir,
+  type ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
 import {
   type Component,
@@ -14,10 +15,83 @@ import {
   visibleWidth,
   wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+
+type BashRenderMode = "full" | "compact";
+type PrettyTuiConfig = {
+  bash?: {
+    mode?: BashRenderMode;
+  };
+};
+
+const loadConfig = (path: string): PrettyTuiConfig => {
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8"));
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+};
 
 /** Polished tool calls and list rendering for Pi's TUI. */
 export default function prettyTui(pi: ExtensionAPI) {
   const cwd = process.cwd();
+  const configPath = join(getAgentDir(), "pretty-tui.json");
+  let config = loadConfig(configPath);
+  let bashMode: BashRenderMode = config.bash?.mode === "compact" ? "compact" : "full";
+
+  const saveBashMode = (mode: BashRenderMode) => {
+    config = { ...config, bash: { ...config.bash, mode } };
+    mkdirSync(getAgentDir(), { recursive: true });
+    writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  };
+
+  pi.registerCommand("pretty-tui", {
+    description: "Configure pi-pretty-tui Bash rendering",
+    getArgumentCompletions: (prefix: string) => {
+      const items = [
+        { value: "full", label: "full", description: "Full command and live output" },
+        { value: "compact", label: "compact", description: "First command line and status only" },
+        { value: "status", label: "status", description: "Show the current mode" },
+      ];
+      const filtered = items.filter((item) => item.value.startsWith(prefix.trim().toLowerCase()));
+      return filtered.length > 0 ? filtered : null;
+    },
+    handler: async (args, ctx) => {
+      let requested = args.trim().toLowerCase();
+
+      if (!requested) {
+        if (!ctx.hasUI) {
+          ctx.ui.notify(`Bash rendering mode: ${bashMode}`, "info");
+          return;
+        }
+        const full = `Full — full command and live output${bashMode === "full" ? " (current)" : ""}`;
+        const compact = `Compact — first command line and status only${bashMode === "compact" ? " (current)" : ""}`;
+        const selected = await ctx.ui.select("Bash rendering mode", [full, compact]);
+        if (!selected) return;
+        requested = selected === full ? "full" : "compact";
+      }
+
+      if (requested === "status") {
+        ctx.ui.notify(`Bash rendering mode: ${bashMode}`, "info");
+        return;
+      }
+      if (requested !== "full" && requested !== "compact") {
+        ctx.ui.notify("Usage: /pretty-tui [full|compact|status]", "error");
+        return;
+      }
+
+      bashMode = requested;
+      try {
+        saveBashMode(bashMode);
+        ctx.ui.notify(`Bash rendering mode set to: ${bashMode}`, "info");
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        ctx.ui.notify(`Mode changed for this session, but could not save settings: ${message}`, "warning");
+      }
+    },
+  });
 
   // Pi normalizes unordered-list markers to "-". Replace only that marker;
   // leave code-block rendering entirely to Pi's built-in Markdown renderer.
@@ -300,10 +374,25 @@ export default function prettyTui(pi: ExtensionAPI) {
     renderShell: "self",
     renderCall(args: any, theme: any, context: any) {
       const command = typeof args.command === "string" ? args.command : "";
+      if (bashMode === "compact") {
+        const commandLines = command.split(/\r\n|\r|\n/);
+        const firstLine = commandLines[0] ?? "";
+        const omitted = commandLines.length - 1;
+        const detail = omitted > 0
+          ? `${firstLine} … (${omitted} more ${omitted === 1 ? "line" : "lines"})`
+          : firstLine;
+        return call(theme, "Bash", detail, context.state);
+      }
       return call(theme, "Bash", command, context.state);
     },
     renderResult(toolResult: any, options: any, theme: any, context: any) {
       const output = textContent(toolResult);
+      if (bashMode === "compact") {
+        if (options.isPartial) return partialResult(context, theme, "Running…");
+        const failed = completeStatus(context, output);
+        return result(theme, failed ? "Command failed" : "Done", "", false, failed);
+      }
+
       if (options.isPartial) {
         return bashResult(context, theme, "Running…", output, options.expanded, "running");
       }

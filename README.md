@@ -11,6 +11,7 @@ A visual refinement extension for the [Pi coding agent](https://pi.dev/). It pro
 - Concise result summaries with expandable output
 - Native-style `Write` previews: first 10 lines when collapsed, full content when expanded
 - Live `Bash` output: latest 5 lines when collapsed, all available output when expanded
+- Switchable `Bash` rendering modes with persistent settings
 - Colored `+added` and `-removed` edit statistics and diffs
 - Correct hanging indentation for long paths and wrapped tool output
 - Bullet (`•`) markers for unordered Markdown lists
@@ -25,9 +26,24 @@ Restart Pi or run `/reload` after installation.
 
 Pi may warn that built-in tools are being overridden. This is expected: pi-pretty-tui re-registers Pi's built-in tools and delegates execution to their original implementations, changing only their TUI renderers.
 
+## Bash rendering modes
+
+Run `/pretty-tui` to choose a mode interactively, or set one directly:
+
+```text
+/pretty-tui full
+/pretty-tui compact
+/pretty-tui status
+```
+
+- `full` (default): show the complete Bash command, the latest 5 output lines when collapsed, and all available output when expanded.
+- `compact`: show only the first command line plus an omitted-line count; show only `Running…`, `Done`, or `Command failed` for the result. Expanding does not reveal Bash output in this mode.
+
+The selected mode applies immediately and persists in `~/.pi/agent/pretty-tui.json` (or the directory selected by `PI_CODING_AGENT_DIR`).
+
 ## Expand tool output
 
-Press `Ctrl+O` (Pi's default `app.tools.expand` keybinding) to show or hide detailed output, edit diffs, and complete `Write` content.
+Press `Ctrl+O` (Pi's default `app.tools.expand` keybinding) to show or hide detailed output, edit diffs, and complete `Write` content. Bash output is expandable only in `full` mode.
 
 ## Compatibility notice
 
