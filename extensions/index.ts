@@ -494,8 +494,6 @@ export default function prettyTui(pi: ExtensionAPI) {
     failed?: number;
     /** Identifies the last tool component for older single-group entries. */
     lastToolCallId?: string;
-    /** Activity shown by newer single-group summaries. */
-    activity?: string;
     /** All groups from a run, used to restore summaries after reload. */
     groups?: ToolSummaryGroup[];
   };
@@ -683,7 +681,6 @@ export default function prettyTui(pi: ExtensionAPI) {
               count: data.count ?? 0,
               failed: data.failed ?? 0,
               lastToolCallId: data.lastToolCallId,
-              activity: data.activity,
             }]
           : (() => {
               const summaryCallId = legacySummaryLastToolCallIds.get(entry.id);
@@ -692,7 +689,6 @@ export default function prettyTui(pi: ExtensionAPI) {
                     count: data?.count ?? 0,
                     failed: data?.failed ?? 0,
                     lastToolCallId: summaryCallId,
-                    activity: data?.activity,
                   }]
                 : [];
             })();
@@ -768,7 +764,6 @@ export default function prettyTui(pi: ExtensionAPI) {
             count: data.count ?? 0,
             failed: data.failed ?? 0,
             lastToolCallId: data.lastToolCallId,
-            activity: data.activity,
           });
         } else if (lastFinishedGroup) {
           // Migrate summaries written by the earlier clean-mode versions,
@@ -778,7 +773,6 @@ export default function prettyTui(pi: ExtensionAPI) {
             count: data?.count ?? lastFinishedGroup.count,
             failed: data?.failed ?? lastFinishedGroup.failed,
             lastToolCallId: lastFinishedGroup.lastToolCallId,
-            activity: data?.activity ?? lastFinishedGroup.activity,
           }, entry.id);
         } else if (lastToolCallId && count > 0) {
           // Also handle a legacy entry inserted before the boundary text.
@@ -786,7 +780,6 @@ export default function prettyTui(pi: ExtensionAPI) {
             count: data?.count ?? count,
             failed: data?.failed ?? failed,
             lastToolCallId,
-            activity: data?.activity,
           }, entry.id);
         }
         continue;
@@ -915,8 +908,7 @@ export default function prettyTui(pi: ExtensionAPI) {
       count,
       failed,
       lastToolCallId,
-      activity: groups[groups.length - 1]?.activity ?? "done",
-      groups,
+      groups: groups.map(({ count, failed, lastToolCallId }) => ({ count, failed, lastToolCallId })),
     });
   });
 
