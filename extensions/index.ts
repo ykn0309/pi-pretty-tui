@@ -105,10 +105,11 @@ export default function prettyTui(pi: ExtensionAPI) {
   });
 
   // Pi's built-in assistant component turns hidden thinking into a static
-  // "Thinking..." label. In clean mode, completed messages should omit that
-  // block entirely, while an active stream still gets the progress label. The
-  // component is exported by Pi specifically for extension-level rendering
-  // customizations, so patch its public methods rather than Pi's source.
+  // "Thinking..." label. In collapsed clean mode, omit that label entirely;
+  // the clean-mode Working(...) row owns activity, while Ctrl+O still reveals
+  // the thinking content. The component is exported by Pi specifically for
+  // extension-level rendering customizations, so patch its public methods
+  // rather than Pi's source.
   const assistantPrototype = AssistantMessageComponent.prototype as any;
   const thinkingPatchKey = Symbol.for("pretty-tui.clean-thinking");
   if (!assistantPrototype[thinkingPatchKey]) {
@@ -129,31 +130,14 @@ export default function prettyTui(pi: ExtensionAPI) {
 
       const showThinking = cleanToolsExpanded;
       const content = Array.isArray(message?.content) ? message.content : [];
-      const lastVisibleContent = [...content].reverse().find((item: any) =>
-        (item.type === "text" && typeof item.text === "string" && item.text.trim()) ||
-        (item.type === "thinking" && typeof item.thinking === "string" && item.thinking.trim()) ||
-        item.type === "toolCall",
-      );
-      const thinkingInProgress = isStreaming && !showThinking && (
-        lastVisibleContent?.type === "thinking" ||
-        (!lastVisibleContent && cleanRun.active && !cleanRun.activeToolCallId)
-      );
-      const hasThinkingContent = content.some(
-        (item: any) => item.type === "thinking" && typeof item.thinking === "string" && item.thinking.trim(),
-      );
-      const displayMessage = !showThinking && !thinkingInProgress
-        ? { ...message, content: content.filter((item: any) => item.type !== "thinking") }
-        : thinkingInProgress && !hasThinkingContent
-          // The stream can start before the first thinking chunk arrives. Add
-          // an invisible placeholder so Pi's normal hidden-block renderer can
-          // still display its single "Thinking..." label.
-          ? { ...message, content: [...content, { type: "thinking", thinking: "pending" }] }
-          : message;
+      // In collapsed clean mode, omit Pi's built-in Thinking... placeholder
+      // entirely. The clean-mode Working(...) row owns the activity label;
+      // expanded mode still reveals the actual thinking content.
+      const displayMessage = showThinking
+        ? message
+        : { ...message, content: content.filter((item: any) => item.type !== "thinking") };
       const previousHideThinkingBlock = this.hideThinkingBlock;
-      // Only an active, collapsed thinking stream gets the progress label.
-      // Once text or a tool call follows, remove the historical block instead
-      // of leaving a stale "Thinking..." label beside the response.
-      this.hideThinkingBlock = thinkingInProgress;
+      this.hideThinkingBlock = false;
       try {
         originalUpdateContent.call(this, displayMessage, isStreaming);
       } finally {
