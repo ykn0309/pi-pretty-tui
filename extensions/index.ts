@@ -63,7 +63,7 @@ export default function prettyTui(pi: ExtensionAPI) {
       const items = [
         { value: "full", label: "full", description: "Full Bash command and live output" },
         { value: "compact", label: "compact", description: "First Bash line and status only" },
-        { value: "clean", label: "clean", description: "Collapse supported tools into Working status" },
+        { value: "clean", label: "clean", description: "Collapse supported tools into Running status" },
         { value: "status", label: "status", description: "Show the current mode" },
       ];
       const filtered = items.filter((item) => item.value.startsWith(prefix.trim().toLowerCase()));
@@ -79,7 +79,7 @@ export default function prettyTui(pi: ExtensionAPI) {
         }
         const full = `Full — full Bash command and live output${renderMode === "full" ? " (current)" : ""}`;
         const compact = `Compact — first Bash line and status only${renderMode === "compact" ? " (current)" : ""}`;
-        const clean = `Clean — collapse supported tools into Working status${renderMode === "clean" ? " (current)" : ""}`;
+        const clean = `Clean — collapse supported tools into Running status${renderMode === "clean" ? " (current)" : ""}`;
         const selected = await ctx.ui.select("pi-pretty-tui rendering mode", [full, compact, clean]);
         if (!selected) return;
         requested = selected === full ? "full" : selected === compact ? "compact" : "clean";
@@ -107,7 +107,7 @@ export default function prettyTui(pi: ExtensionAPI) {
 
   // Pi's built-in assistant component turns hidden thinking into a static
   // "Thinking..." label. In collapsed clean mode, omit that label entirely;
-  // the clean-mode Working(...) row owns activity, while Ctrl+O still reveals
+  // the clean-mode Running(...) row owns activity, while Ctrl+O still reveals
   // the thinking content. The component is exported by Pi specifically for
   // extension-level rendering customizations, so patch its public methods
   // rather than Pi's source.
@@ -132,7 +132,7 @@ export default function prettyTui(pi: ExtensionAPI) {
       const showThinking = cleanToolsExpanded;
       const content = Array.isArray(message?.content) ? message.content : [];
       // In collapsed clean mode, omit Pi's built-in Thinking... placeholder
-      // entirely. The clean-mode Working(...) row owns the activity label;
+      // entirely. The clean-mode Running(...) row owns the activity label;
       // expanded mode still reveals the actual thinking content.
       const displayMessage = showThinking
         ? message
@@ -680,7 +680,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     continuation: "  ",
     content: () => {
       const currentActivity = typeof activity === "function" ? activity() : activity;
-      const label = currentActivity === "done" ? "Done" : "Working";
+      const label = currentActivity === "done" ? "Done" : "Running";
       const color = label === "Done" ? "success" : failed > 0 ? "error" : "accent";
       return theme.fg(color, theme.bold(label)) +
         theme.fg("dim", "(") +
@@ -689,7 +689,7 @@ export default function prettyTui(pi: ExtensionAPI) {
   });
 
   /**
-   * Clean mode keeps Working/Done rows in the existing tool components. This
+   * Clean mode keeps Running/Done rows in the existing tool components. This
    * avoids waiting for agent_end (which can be followed by retry/compaction),
    * leaves a visible count between calls, and keeps each row in transcript order.
    */
@@ -714,7 +714,7 @@ export default function prettyTui(pi: ExtensionAPI) {
           )]).render(width);
         }
 
-        // The active tool owns the live Working row. Keep the latest completed
+        // The active tool owns the live Running row. Keep the latest completed
         // portion hidden while that tool's minimum display time is running.
         if (
           cleanRun.lastCompletedToolCallId === toolCallId &&
@@ -727,7 +727,7 @@ export default function prettyTui(pi: ExtensionAPI) {
         // Do not fall back to the per-component pending state here: Pi may
         // create several tool-call components before execution starts, and
         // showing that fallback would briefly expose all of them. The active
-        // component is selected to render the current Working row at execution start.
+        // component is selected to render the current Running row at execution start.
         return [];
       },
       invalidate() {},
@@ -741,7 +741,7 @@ export default function prettyTui(pi: ExtensionAPI) {
   };
 
   // In collapsed clean mode, every supported tool call is represented by its
-  // Working row. Ctrl+O bypasses this and restores the normal full renderer.
+  // Running row. Ctrl+O bypasses this and restores the normal full renderer.
   const hideCleanTool = (
     _toolCallId: string,
     expanded: boolean,
