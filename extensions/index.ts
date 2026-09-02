@@ -672,12 +672,17 @@ export default function prettyTui(pi: ExtensionAPI) {
     failed: number,
     activity: DisplayValue = "done",
   ): DisplayRow => ({
-    prefix: theme.fg(failed > 0 ? "error" : "accent", "● "),
+    prefix: () => {
+      const currentActivity = typeof activity === "function" ? activity() : activity;
+      const color = currentActivity === "done" ? "success" : failed > 0 ? "error" : "accent";
+      return theme.fg(color, "● ");
+    },
     continuation: "  ",
     content: () => {
       const currentActivity = typeof activity === "function" ? activity() : activity;
       const label = currentActivity === "done" ? "Done" : "Working";
-      return theme.fg(label === "Done" ? "success" : "accent", theme.bold(label)) +
+      const color = label === "Done" ? "success" : failed > 0 ? "error" : "accent";
+      return theme.fg(color, theme.bold(label)) +
         theme.fg("dim", "(") +
         theme.fg("text", summaryText(count, failed, currentActivity)) + theme.fg("dim", ")");
     },
