@@ -40,7 +40,7 @@ Run `/pretty-tui` to choose a mode interactively, or set one directly:
 
 - `full` (default): show the complete Bash command, the latest 5 output lines when collapsed, and all available output when expanded.
 - `compact`: when collapsed, show only the first Bash command line plus an omitted-line count and only `Running…`, `Done`, or `Command failed` for the result. Press `Ctrl+O` to reveal the complete command and all available output.
-- `clean`: while a supported tool is running, show only its name. After each completion, keep a live summary such as `Tools(5 tool calls)` visible while the model continues thinking; after the agent run settles, the summary is persisted. Visible assistant text starts a new tool group, so later calls get a separate summary. Completed thinking blocks stay hidden, while active thinking shows `Thinking...`; press `Ctrl+O` to reveal thinking content and normal expanded tool calls/output in transcript order.
+- `clean`: show a supported tool with the normal `full` renderer while it is running; after completion, merge it into a live summary such as `Tools(5 tool calls)` while the model continues thinking. After the agent run settles, summaries are persisted. Visible assistant text starts a new tool group, so later calls get a separate summary. Completed thinking blocks stay hidden, while active thinking shows `Thinking...`; press `Ctrl+O` to reveal thinking content and normal expanded tool calls/output in transcript order.
 
 Clean mode covers the built-in tools managed by this package: `read`, `bash`, `edit`, `write`, `grep`, `find`, and `ls`. Third-party tools keep their own rendering.
 
