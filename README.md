@@ -12,7 +12,7 @@ A visual refinement extension for the [Pi coding agent](https://pi.dev/). It pro
 - Native-style `Write` previews: first 10 lines when collapsed, full content when expanded
 - Live `Bash` output: latest 5 lines when collapsed, all available output when expanded
 - Switchable `full`, `compact`, and `clean` rendering modes with persistent settings
-- Clean mode hides completed thinking blocks, shows `Thinking...` only during active thinking, and reveals the original thinking content when expanded
+- Clean mode hides thinking blocks (including Pi's standalone `Thinking...` placeholder) while collapsed and reveals the original thinking content when expanded
 - Colored `+added` and `-removed` edit statistics and diffs
 - Correct hanging indentation for long paths and wrapped tool output
 - Bullet (`•`) markers for unordered Markdown lists
