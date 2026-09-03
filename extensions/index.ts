@@ -686,6 +686,17 @@ export default function prettyTui(pi: ExtensionAPI) {
     cleanRun.activeToolName = undefined;
   };
 
+  const settleLastCleanGroup = () => {
+    const group = cleanRun.groups[cleanRun.groups.length - 1];
+    if (!group) return;
+    group.activity = "done";
+    settledSummaries.set(group.lastToolCallId, {
+      count: group.count,
+      failed: group.failed,
+      activity: activityValueForHold(group.lastToolCallId, "done"),
+    });
+  };
+
   const summaryText = (count: number, _failed: number, activity = "done"): string => {
     const activityText = typeof activity === "string" ? activity : "done";
     const countLabel = `${count} tool ${count === 1 ? "call" : "calls"}`;
@@ -804,8 +815,11 @@ export default function prettyTui(pi: ExtensionAPI) {
       // from the current branch (for example, after compaction).
       const missingGroups = groups.filter((group) => !knownToolCallIds.has(group.lastToolCallId));
       if (missingGroups.length === 0) return [];
+      // Persisted entries represent settled groups. Older versions could
+      // accidentally store the transient responding... activity, so always
+      // normalize their display to Done.
       return block(missingGroups.map((group) =>
-        summaryRow(theme, group.count, group.failed, group.activity ?? "done")
+        summaryRow(theme, group.count, group.failed, "done")
       )).render(width);
     },
     invalidate() {},
@@ -838,7 +852,7 @@ export default function prettyTui(pi: ExtensionAPI) {
       settledSummaries.set(group.lastToolCallId, {
         count: group.count,
         failed: group.failed,
-        activity: group.activity ?? "done",
+        activity: "done",
       });
       if (entryId) legacySummaryLastToolCallIds.set(entryId, group.lastToolCallId);
       explicitSummaryIds.add(group.lastToolCallId);
@@ -967,8 +981,9 @@ export default function prettyTui(pi: ExtensionAPI) {
   });
   pi.on("message_end", (event) => {
     if (hasVisibleAssistantText(event.message)) {
-      cleanRun.activity = "responding...";
-      finishCleanGroup("responding...");
+      cleanRun.activity = "done";
+      finishCleanGroup("done");
+      settleLastCleanGroup();
       return;
     }
     trackPendingToolActivity(event.message);
