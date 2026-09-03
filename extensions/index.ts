@@ -488,6 +488,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     name: string;
     until: number;
     after: string;
+    started: boolean;
     timer?: ReturnType<typeof setTimeout>;
   };
   const settledSummaries = new Map<string, { count: number; failed: number; activity: DisplayValue }>();
@@ -547,15 +548,23 @@ export default function prettyTui(pi: ExtensionAPI) {
     }, delay);
   };
 
-  const beginToolActivity = (toolCallId: string, name: string) => {
+  const beginToolActivity = (toolCallId: string, name: string, started = false) => {
     const previous = toolActivityHolds.get(toolCallId);
-    if (previous?.timer) clearTimeout(previous.timer);
+    if (previous) {
+      if (previous.timer) clearTimeout(previous.timer);
+      previous.name = name;
+      previous.started ||= started;
+      cleanRun.activeToolName = name;
+      cleanRun.activity = name;
+      return;
+    }
     const startedAt = Date.now();
     toolActivityHolds.set(toolCallId, {
       toolCallId,
       name,
       until: startedAt + CLEAN_TOOL_ACTIVITY_MIN_MS,
       after: "thinking...",
+      started,
     });
     cleanRun.activeToolName = name;
     cleanRun.activity = name;
@@ -570,9 +579,12 @@ export default function prettyTui(pi: ExtensionAPI) {
         name,
         until: now + CLEAN_TOOL_ACTIVITY_MIN_MS,
         after: "thinking...",
+        started: true,
       };
       toolActivityHolds.set(toolCallId, hold);
     }
+    hold.name = name;
+    hold.started = true;
     hold.after = "thinking...";
     scheduleToolActivityRelease(hold);
   };
@@ -611,7 +623,7 @@ export default function prettyTui(pi: ExtensionAPI) {
         }
         cleanRun.active = true;
         cleanRun.activeToolCallId = this.toolCallId;
-        beginToolActivity(this.toolCallId, toolDisplayName(this.toolName));
+        beginToolActivity(this.toolCallId, toolDisplayName(this.toolName), true);
       }
       return originalMarkExecutionStarted.call(this);
     };
@@ -899,24 +911,57 @@ export default function prettyTui(pi: ExtensionAPI) {
       (item: any) => item.type === "text" && typeof item.text === "string" && item.text.trim().length > 0,
     );
 
+  const latestPendingToolCall = (message: any): any =>
+    [...(message?.content ?? [])].reverse().find(
+      (item: any) => item.type === "toolCall" && supportedTools.has(item.name) && item.id,
+    );
+
+  const trackPendingToolActivity = (message: any): boolean => {
+    const toolCall = latestPendingToolCall(message);
+    if (!toolCall || cleanRun.lastCompletedToolCallId === toolCall.id) return false;
+    cleanRun.active = true;
+    cleanRun.activeToolCallId = toolCall.id;
+    beginToolActivity(toolCall.id, toolDisplayName(toolCall.name));
+    return true;
+  };
+
+  const clearPendingToolActivities = () => {
+    for (const [toolCallId, hold] of toolActivityHolds) {
+      if (hold.started) continue;
+      if (hold.timer) clearTimeout(hold.timer);
+      toolActivityHolds.delete(toolCallId);
+      if (cleanRun.activeToolCallId === toolCallId) {
+        cleanRun.activeToolCallId = undefined;
+        cleanRun.activeToolName = undefined;
+      }
+    }
+  };
+
   // A visible assistant response is the boundary between tool groups. Do
   // this during streaming so a following tool call cannot inherit the prior
   // summary, while message_end keeps the rule correct for non-streaming paths.
   pi.on("message_update", (event) => {
-    if (!hasVisibleAssistantText(event.message)) return;
-    cleanRun.activity = "responding...";
-    finishCleanGroup("responding...");
+    if (hasVisibleAssistantText(event.message)) {
+      cleanRun.activity = "responding...";
+      finishCleanGroup("responding...");
+      return;
+    }
+    trackPendingToolActivity(event.message);
   });
   pi.on("message_end", (event) => {
-    if (!hasVisibleAssistantText(event.message)) return;
-    cleanRun.activity = "responding...";
-    finishCleanGroup("responding...");
+    if (hasVisibleAssistantText(event.message)) {
+      cleanRun.activity = "responding...";
+      finishCleanGroup("responding...");
+      return;
+    }
+    trackPendingToolActivity(event.message);
   });
 
   pi.on("agent_start", () => {
     // A retry can start another low-level agent loop. Keep the accumulated
     // count until the whole run reaches agent_settled.
     if (!cleanRun.active) {
+      clearToolActivityHolds();
       cleanRun.count = 0;
       cleanRun.failed = 0;
       cleanRun.groups = [];
@@ -932,7 +977,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     if (!supportedTools.has(event.toolName)) return;
     cleanRun.active = true;
     cleanRun.activeToolCallId = event.toolCallId;
-    beginToolActivity(event.toolCallId, toolDisplayName(event.toolName));
+    beginToolActivity(event.toolCallId, toolDisplayName(event.toolName), true);
   });
   pi.on("tool_execution_end", (event) => {
     if (!supportedTools.has(event.toolName)) return;
@@ -954,6 +999,7 @@ export default function prettyTui(pi: ExtensionAPI) {
   pi.on("agent_end", () => {
     // No summary is appended here: this event may be followed by an automatic
     // retry or compaction. The live row remains available until settled.
+    clearPendingToolActivities();
     cleanRun.activeToolCallId = undefined;
     cleanRun.activeToolName = undefined;
     cleanRun.activity = "thinking...";
@@ -961,6 +1007,7 @@ export default function prettyTui(pi: ExtensionAPI) {
   pi.on("agent_settled", () => {
     if (cleanRun.settled) return;
 
+    clearPendingToolActivities();
     // Finalize the last group after retries/compaction have definitely ended.
     finishCleanGroup("done");
     for (const group of cleanRun.groups) {
