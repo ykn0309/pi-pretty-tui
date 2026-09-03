@@ -1198,7 +1198,14 @@ export default function prettyTui(pi: ExtensionAPI) {
     renderCall(args: any, theme: any, context: any) {
       if (hideCleanTool(context.toolCallId, context.expanded, context.executionStarted)) return cleanToolCall(theme, "Write", context.toolCallId);
       const content = typeof args.content === "string" ? args.content : "";
-      return writeCall(theme, String(args.path ?? ""), content, context.expanded, context.state);
+      const path = String(args.path ?? "");
+      if (renderMode === "compact" && !context.expanded) {
+        const lines = content.replace(/\t/g, "    ").split("\n");
+        while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+        const total = lines.length;
+        return call(theme, "Write", `${path} · ${total} ${total === 1 ? "line" : "lines"}`, context.state);
+      }
+      return writeCall(theme, path, content, context.expanded, context.state);
     },
     renderResult(toolResult: any, options: any, theme: any, context: any) {
       const output = textContent(toolResult);
