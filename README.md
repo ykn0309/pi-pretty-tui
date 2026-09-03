@@ -7,10 +7,9 @@ A visual refinement extension for the [Pi coding agent](https://pi.dev/). It pro
 ## Features
 
 - Compact `Read`, `Bash`, `Edit`, `Write`, `Grep`, `Find`, and `List` calls
-- Gray running, green success, and red failure indicators
-- Concise result summaries with expandable output
-- Native-style `Write` previews: first 10 lines when collapsed, full content when expanded
-- Live `Bash` output: latest 5 lines when collapsed, all available output when expanded
+- Concise per-tool call and result summaries with expandable details
+- Native-style `Write` previews in `full` mode: first 10 lines when collapsed, full content when expanded
+- Live `Bash` output in `full` mode: latest 5 lines when collapsed, all available output when expanded
 - Switchable `full`, `compact`, and `clean` rendering modes with persistent settings
 - Clean mode hides thinking blocks (including Pi's standalone `Thinking...` placeholder) while collapsed and reveals the original thinking content when expanded
 - Colored `+added` and `-removed` edit statistics and diffs
@@ -38,8 +37,8 @@ Run `/pretty-tui` to choose a mode interactively, or set one directly:
 /pretty-tui status
 ```
 
-- `full` (default): show the complete Bash command, the latest 5 output lines when collapsed, and all available output when expanded.
-- `compact`: when collapsed, show only the first Bash command line plus an omitted-line count and only `Running…`, `Done`, or `Command failed` for the result. Press `Ctrl+O` to reveal the complete command and all available output.
+- `full` (default): preserve each tool's detailed call renderer and normal result preview. Press `Ctrl+O` to expand available output, diffs, and content.
+- `compact`: when collapsed, all supported built-in tools use concise one-line call summaries and final result summaries. Long commands, written content, edit diffs, and tool output stay hidden until expanded; press `Ctrl+O` to reveal the full details.
 - `clean`: collapse supported tool calls into a single `Running(...)` status; the activity slot shows a tool name as soon as its streamed tool call appears, such as `Running(3 tool calls · Read)`, and remains visible for at least 1 second before changing to `thinking...`. Once settled, the label becomes `Done(...)`. Visible assistant text starts a new tool group, so later calls get a separate status. Collapsed thinking blocks stay hidden without Pi's `Thinking...` placeholder; press `Ctrl+O` to reveal thinking content and normal expanded tool calls/output in transcript order.
 
 Clean mode covers the built-in tools managed by this package: `read`, `bash`, `edit`, `write`, `grep`, `find`, and `ls`. Third-party tools keep their own rendering.

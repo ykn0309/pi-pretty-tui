@@ -61,9 +61,9 @@ export default function prettyTui(pi: ExtensionAPI) {
     description: "Configure pi-pretty-tui rendering mode",
     getArgumentCompletions: (prefix: string) => {
       const items = [
-        { value: "full", label: "full", description: "Full Bash command and live output" },
-        { value: "compact", label: "compact", description: "First Bash line and status only" },
-        { value: "clean", label: "clean", description: "Collapse supported tools into Running status" },
+        { value: "full", label: "full", description: "Full tool details and output" },
+        { value: "compact", label: "compact", description: "Concise summaries for all built-in tools" },
+        { value: "clean", label: "clean", description: "Group supported tools into Running/Done status" },
         { value: "status", label: "status", description: "Show the current mode" },
       ];
       const filtered = items.filter((item) => item.value.startsWith(prefix.trim().toLowerCase()));
@@ -77,9 +77,9 @@ export default function prettyTui(pi: ExtensionAPI) {
           ctx.ui.notify(`pi-pretty-tui mode: ${renderMode}`, "info");
           return;
         }
-        const full = `Full — full Bash command and live output${renderMode === "full" ? " (current)" : ""}`;
-        const compact = `Compact — first Bash line and status only${renderMode === "compact" ? " (current)" : ""}`;
-        const clean = `Clean — collapse supported tools into Running status${renderMode === "clean" ? " (current)" : ""}`;
+        const full = `Full — full tool details and output${renderMode === "full" ? " (current)" : ""}`;
+        const compact = `Compact — concise summaries for all built-in tools${renderMode === "compact" ? " (current)" : ""}`;
+        const clean = `Clean — group supported tools into Running/Done status${renderMode === "clean" ? " (current)" : ""}`;
         const selected = await ctx.ui.select("pi-pretty-tui rendering mode", [full, compact, clean]);
         if (!selected) return;
         requested = selected === full ? "full" : selected === compact ? "compact" : "clean";
