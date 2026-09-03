@@ -616,6 +616,8 @@ export default function prettyTui(pi: ExtensionAPI) {
   const toolExecutionPatchKey = Symbol.for("pretty-tui.clean-tool-execution");
   if (!toolExecutionPrototype[toolExecutionPatchKey]) {
     const originalMarkExecutionStarted = toolExecutionPrototype.markExecutionStarted;
+    const originalToolRender = toolExecutionPrototype.render;
+    const renderedModeKey = Symbol("pretty-tui.tool-rendered-mode");
     const patchedMarkExecutionStarted = function (this: any) {
       if (supportedTools.has(this.toolName)) {
         if (typeof this.ui?.requestRender === "function") {
@@ -627,12 +629,22 @@ export default function prettyTui(pi: ExtensionAPI) {
       }
       return originalMarkExecutionStarted.call(this);
     };
+    const patchedToolRender = function (this: any, width: number): string[] {
+      if (this[renderedModeKey] !== renderMode) {
+        this[renderedModeKey] = renderMode;
+        this.updateDisplay();
+      }
+      return originalToolRender.call(this, width);
+    };
 
     toolExecutionPrototype[toolExecutionPatchKey] = {
       originalMarkExecutionStarted,
       patchedMarkExecutionStarted,
+      originalRender: originalToolRender,
+      patchedRender: patchedToolRender,
     };
     toolExecutionPrototype.markExecutionStarted = patchedMarkExecutionStarted;
+    toolExecutionPrototype.render = patchedToolRender;
 
     pi.on("session_shutdown", () => {
       const patch = toolExecutionPrototype[toolExecutionPatchKey];
@@ -640,7 +652,13 @@ export default function prettyTui(pi: ExtensionAPI) {
       if (patch.patchedMarkExecutionStarted === toolExecutionPrototype.markExecutionStarted) {
         toolExecutionPrototype.markExecutionStarted = patch.originalMarkExecutionStarted;
       }
-      if (toolExecutionPrototype.markExecutionStarted === patch.originalMarkExecutionStarted) {
+      if (patch.patchedRender === toolExecutionPrototype.render) {
+        toolExecutionPrototype.render = patch.originalRender;
+      }
+      if (
+        toolExecutionPrototype.markExecutionStarted === patch.originalMarkExecutionStarted &&
+        toolExecutionPrototype.render === patch.originalRender
+      ) {
         delete toolExecutionPrototype[toolExecutionPatchKey];
       }
     });
