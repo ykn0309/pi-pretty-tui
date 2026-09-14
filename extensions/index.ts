@@ -117,7 +117,8 @@ export default function prettyTui(pi: ExtensionAPI) {
       const content = this.children?.[0] as any;
       if (!content) return;
 
-      // The frame replaces Pi's filled background and owns the spacing.
+      // Reuse Pi's theme-aware user background across the complete frame.
+      const userMessageBg = content.bgFn as ((text: string) => string) | undefined;
       content.paddingX = 0;
       content.paddingY = 0;
       content.setBgFn?.(undefined);
@@ -131,8 +132,12 @@ export default function prettyTui(pi: ExtensionAPI) {
           const sidePad = Math.min(outputPad, Math.max(0, Math.floor((width - 1) / 2)));
           const outer = " ".repeat(sidePad);
           const frameWidth = Math.max(1, width - sidePad * 2);
+          const paintBackground = (line: string) => {
+            const padding = " ".repeat(Math.max(0, frameWidth - visibleWidth(line)));
+            return userMessageBg ? userMessageBg(line + padding) : line + padding;
+          };
           if (frameWidth < 4) {
-            return content.render(frameWidth).map((line: string) => outer + line);
+            return content.render(frameWidth).map((line: string) => outer + paintBackground(line));
           }
 
           const title = " User ";
@@ -145,7 +150,7 @@ export default function prettyTui(pi: ExtensionAPI) {
             const padding = " ".repeat(Math.max(0, contentWidth - visibleWidth(line)));
             return border("│ ") + line + padding + border(" │");
           });
-          return [outer + top, ...body.map((line: string) => outer + line), outer + bottom];
+          return [top, ...body, bottom].map((line: string) => outer + paintBackground(line));
         },
         invalidate() {
           content.invalidate?.();

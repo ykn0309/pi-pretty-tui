@@ -6,7 +6,7 @@ A visual refinement extension for the [Pi coding agent](https://pi.dev/). It pro
 
 ## Features
 
-- Rounded, titled `User` message frames with theme-aware borders and Markdown support
+- Rounded, titled `User` message frames with theme-aware borders, filled backgrounds, and Markdown support
 - Compact `Read`, `Bash`, `Edit`, `Write`, `Grep`, `Find`, and `List` calls
 - Concise per-tool call and result summaries with expandable details
 - Native-style `Write` previews in `full` mode: first 10 lines when collapsed, full content when expanded
