@@ -1174,6 +1174,16 @@ export default function prettyTui(pi: ExtensionAPI) {
     invalidate() {},
   }));
 
+  const messageContentItems = (message: any): any[] =>
+    Array.isArray(message?.content) ? message.content : [];
+
+  const messageHasVisibleText = (message: any): boolean =>
+    typeof message?.content === "string"
+      ? message.content.trim().length > 0
+      : messageContentItems(message).some(
+          (item: any) => item.type === "text" && typeof item.text === "string" && item.text.trim().length > 0,
+        );
+
   const restoreCleanSession = (ctx: any) => {
     cleanToolsExpanded = ctx.ui.getToolsExpanded();
     settledSummaries.clear();
@@ -1278,11 +1288,8 @@ export default function prettyTui(pi: ExtensionAPI) {
       }
 
       if (message.role === "assistant") {
-        const hasVisibleText = (message.content ?? []).some(
-          (item: any) => item.type === "text" && typeof item.text === "string" && item.text.trim().length > 0,
-        );
-        if (hasVisibleText) finishGroup();
-        for (const item of message.content ?? []) {
+        if (messageHasVisibleText(message)) finishGroup();
+        for (const item of messageContentItems(message)) {
           if (item.type !== "toolCall" || !supportedTools.has(item.name)) continue;
           count++;
           lastToolCallId = item.id;
@@ -1309,12 +1316,10 @@ export default function prettyTui(pi: ExtensionAPI) {
   });
 
   const hasVisibleAssistantText = (message: any): boolean =>
-    message?.role === "assistant" && (message.content ?? []).some(
-      (item: any) => item.type === "text" && typeof item.text === "string" && item.text.trim().length > 0,
-    );
+    message?.role === "assistant" && messageHasVisibleText(message);
 
   const pendingToolCalls = (message: any): any[] =>
-    (message?.content ?? []).filter(
+    messageContentItems(message).filter(
       (item: any) => item.type === "toolCall" && supportedTools.has(item.name) && item.id,
     );
 
