@@ -837,7 +837,10 @@ export default function prettyTui(pi: ExtensionAPI) {
       return originalSetExpanded.call(this, expanded);
     };
     const patchedToolRender = function (this: any, width: number): string[] {
-      if (supportedTools.has(this.toolName)) cleanToolComponents.set(this.toolCallId, this);
+      if (supportedTools.has(this.toolName)) {
+        cleanToolComponents.set(this.toolCallId, this);
+        knownToolCallIds.add(this.toolCallId);
+      }
       if (this[renderedModeKey] !== renderMode) {
         this[renderedModeKey] = renderMode;
         this.updateDisplay();
@@ -1162,6 +1165,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     cleanToolsExpanded = ctx.ui.getToolsExpanded();
     settledSummaries.clear();
     legacySummaryLastToolCallIds.clear();
+    knownToolCallIds.clear();
     cleanCompactToolCallIds.clear();
     cleanGroupToolCallIds.clear();
     cleanToolCallGroupOwners.clear();
