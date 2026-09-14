@@ -47,9 +47,9 @@ export default function prettyTui(pi: ExtensionAPI) {
   const configPath = join(getAgentDir(), "pretty-tui.json");
   let config = loadConfig(configPath);
   const configuredMode = config.mode ?? config.bash?.mode;
-  let renderMode: PrettyTuiMode = configuredMode === "compact" || configuredMode === "clean"
+  let renderMode: PrettyTuiMode = configuredMode === "full" || configuredMode === "compact" || configuredMode === "clean"
     ? configuredMode
-    : "full";
+    : "clean";
   let cleanToolsExpanded = false;
   let changingAllToolsExpansion = false;
   const cleanCompactToolCallIds = new Set<string>();
