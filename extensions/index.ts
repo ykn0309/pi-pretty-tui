@@ -58,6 +58,7 @@ export default function prettyTui(pi: ExtensionAPI) {
   const cleanToolCallGroupOwners = new Map<string, string>();
   const cleanToolComponents = new Map<string, any>();
   const cleanToolThemes = new Map<string, any>();
+  const cleanToolNames = new Map<string, string>();
   let renderCleanGroupSummary = (_lastToolCallId: string, _width: number): string[] => [];
 
   const setCleanGroupMembers = (lastToolCallId: string, toolCallIds: string[]) => {
@@ -687,6 +688,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     count: number;
     failed: number;
     currentToolCallIds: string[];
+    activeToolCallIds: Set<string>;
     groups: ToolSummaryGroup[];
     active: boolean;
     settled: boolean;
@@ -695,6 +697,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     count: 0,
     failed: 0,
     currentToolCallIds: [],
+    activeToolCallIds: new Set(),
     groups: [],
     active: false,
     settled: false,
@@ -781,6 +784,9 @@ export default function prettyTui(pi: ExtensionAPI) {
     return () => heldActivity(hold);
   };
 
+  const liveCleanToolCount = (): number =>
+    Math.max(cleanRun.count, cleanRun.currentToolCallIds.length);
+
   const currentCleanActivity = (): string => {
     if (cleanRun.activeToolCallId) {
       return cleanRun.activeToolName ?? cleanRun.activity ?? "thinking...";
@@ -812,6 +818,12 @@ export default function prettyTui(pi: ExtensionAPI) {
     };
     const patchedMarkExecutionStarted = function (this: any) {
       if (supportedTools.has(this.toolName)) {
+        if (!cleanRun.currentToolCallIds.includes(this.toolCallId)) {
+          cleanRun.currentToolCallIds.push(this.toolCallId);
+        }
+        cleanRun.activeToolCallIds.add(this.toolCallId);
+        cleanToolNames.set(this.toolCallId, toolDisplayName(this.toolName));
+        setCleanGroupMembers(this.toolCallId, cleanRun.currentToolCallIds.slice());
         if (typeof this.ui?.requestRender === "function") {
           cleanRun.requestRender = () => this.ui.requestRender();
         }
@@ -989,6 +1001,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     cleanRun.count = 0;
     cleanRun.failed = 0;
     cleanRun.currentToolCallIds = [];
+    cleanRun.activeToolCallIds.clear();
     cleanRun.lastCompletedToolCallId = undefined;
     cleanRun.activeToolCallId = undefined;
     cleanRun.activeToolName = undefined;
@@ -1046,7 +1059,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     if (cleanRun.activeToolCallId === lastToolCallId) {
       return block([summaryRow(
         summaryTheme,
-        cleanRun.count + 1,
+        liveCleanToolCount(),
         cleanRun.failed,
         () => cleanRun.activeToolName ?? currentCleanActivity(),
       )]).render(width);
@@ -1078,7 +1091,7 @@ export default function prettyTui(pi: ExtensionAPI) {
         if (cleanRun.activeToolCallId === toolCallId) {
           return block([summaryRow(
             theme,
-            cleanRun.count + 1,
+            liveCleanToolCount(),
             cleanRun.failed,
             () => cleanRun.activeToolName ?? name,
           )]).render(width);
@@ -1161,7 +1174,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     invalidate() {},
   }));
 
-  pi.on("session_start", (_event, ctx) => {
+  const restoreCleanSession = (ctx: any) => {
     cleanToolsExpanded = ctx.ui.getToolsExpanded();
     settledSummaries.clear();
     legacySummaryLastToolCallIds.clear();
@@ -1171,11 +1184,13 @@ export default function prettyTui(pi: ExtensionAPI) {
     cleanToolCallGroupOwners.clear();
     cleanToolComponents.clear();
     cleanToolThemes.clear();
+    cleanToolNames.clear();
     clearToolActivityHolds();
     cleanRun.requestRender = undefined;
     cleanRun.count = 0;
     cleanRun.failed = 0;
     cleanRun.currentToolCallIds = [];
+    cleanRun.activeToolCallIds.clear();
     cleanRun.groups = [];
     cleanRun.activeToolCallId = undefined;
     cleanRun.activeToolName = undefined;
@@ -1282,6 +1297,15 @@ export default function prettyTui(pi: ExtensionAPI) {
     }
 
     finishGroup();
+  };
+
+  pi.on("session_start", (_event, ctx) => restoreCleanSession(ctx));
+  pi.on("session_tree", (_event, ctx) => restoreCleanSession(ctx));
+  pi.on("session_compact", () => {
+    // Tool components removed by compaction must no longer suppress the
+    // durable summary fallback. Remaining components register again as Pi
+    // renders the rebuilt transcript.
+    knownToolCallIds.clear();
   });
 
   const hasVisibleAssistantText = (message: any): boolean =>
@@ -1289,17 +1313,22 @@ export default function prettyTui(pi: ExtensionAPI) {
       (item: any) => item.type === "text" && typeof item.text === "string" && item.text.trim().length > 0,
     );
 
-  const latestPendingToolCall = (message: any): any =>
-    [...(message?.content ?? [])].reverse().find(
+  const pendingToolCalls = (message: any): any[] =>
+    (message?.content ?? []).filter(
       (item: any) => item.type === "toolCall" && supportedTools.has(item.name) && item.id,
     );
 
   const trackPendingToolActivity = (message: any): boolean => {
-    const toolCall = latestPendingToolCall(message);
-    if (!toolCall || cleanRun.lastCompletedToolCallId === toolCall.id) return false;
-    if (!cleanRun.currentToolCallIds.includes(toolCall.id)) {
-      cleanRun.currentToolCallIds.push(toolCall.id);
+    const toolCalls = pendingToolCalls(message);
+    if (toolCalls.length === 0) return false;
+    for (const toolCall of toolCalls) {
+      if (!cleanRun.currentToolCallIds.includes(toolCall.id)) {
+        cleanRun.currentToolCallIds.push(toolCall.id);
+      }
+      cleanToolNames.set(toolCall.id, toolDisplayName(toolCall.name));
     }
+    const toolCall = toolCalls[toolCalls.length - 1];
+    if (cleanRun.lastCompletedToolCallId === toolCall.id) return false;
     setCleanGroupMembers(toolCall.id, cleanRun.currentToolCallIds.slice());
     cleanRun.active = true;
     cleanRun.activeToolCallId = toolCall.id;
@@ -1348,11 +1377,13 @@ export default function prettyTui(pi: ExtensionAPI) {
       cleanRun.count = 0;
       cleanRun.failed = 0;
       cleanRun.currentToolCallIds = [];
+      cleanRun.activeToolCallIds.clear();
       cleanRun.groups = [];
       cleanRun.lastCompletedToolCallId = undefined;
       cleanRun.settled = false;
     }
     cleanRun.active = true;
+    cleanRun.activeToolCallIds.clear();
     cleanRun.activeToolCallId = undefined;
     cleanRun.activeToolName = undefined;
     cleanRun.activity = "thinking...";
@@ -1362,6 +1393,8 @@ export default function prettyTui(pi: ExtensionAPI) {
     if (!cleanRun.currentToolCallIds.includes(event.toolCallId)) {
       cleanRun.currentToolCallIds.push(event.toolCallId);
     }
+    cleanRun.activeToolCallIds.add(event.toolCallId);
+    cleanToolNames.set(event.toolCallId, toolDisplayName(event.toolName));
     setCleanGroupMembers(event.toolCallId, cleanRun.currentToolCallIds.slice());
     cleanRun.active = true;
     cleanRun.activeToolCallId = event.toolCallId;
@@ -1378,10 +1411,15 @@ export default function prettyTui(pi: ExtensionAPI) {
     cleanRun.count++;
     if (event.isError) cleanRun.failed++;
     cleanRun.lastCompletedToolCallId = event.toolCallId;
+    cleanRun.activeToolCallIds.delete(event.toolCallId);
     if (cleanRun.activeToolCallId === event.toolCallId) {
-      cleanRun.activeToolCallId = undefined;
-      cleanRun.activeToolName = undefined;
-      cleanRun.activity = "thinking...";
+      cleanRun.activeToolCallId = [...cleanRun.currentToolCallIds]
+        .reverse()
+        .find((toolCallId) => cleanRun.activeToolCallIds.has(toolCallId));
+      cleanRun.activeToolName = cleanRun.activeToolCallId
+        ? cleanToolNames.get(cleanRun.activeToolCallId)
+        : undefined;
+      cleanRun.activity = cleanRun.activeToolName ?? "thinking...";
     }
     const visibleSummaryToolCallId = cleanRun.activeToolCallId ?? cleanRun.lastCompletedToolCallId;
     setCleanGroupMembers(visibleSummaryToolCallId, cleanRun.currentToolCallIds.slice());
@@ -1390,6 +1428,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     // No summary is appended here: this event may be followed by an automatic
     // retry or compaction. The live row remains available until settled.
     clearPendingToolActivities();
+    cleanRun.activeToolCallIds.clear();
     cleanRun.activeToolCallId = undefined;
     cleanRun.activeToolName = undefined;
     cleanRun.activity = "thinking...";
@@ -1409,6 +1448,7 @@ export default function prettyTui(pi: ExtensionAPI) {
       });
     }
     cleanRun.active = false;
+    cleanRun.activeToolCallIds.clear();
     cleanRun.activeToolCallId = undefined;
     cleanRun.activeToolName = undefined;
     cleanRun.activity = "done";
