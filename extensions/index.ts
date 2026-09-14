@@ -54,7 +54,15 @@ export default function prettyTui(pi: ExtensionAPI) {
   let changingAllToolsExpansion = false;
   const cleanCompactToolCallIds = new Set<string>();
   const cleanGroupToolCallIds = new Map<string, string[]>();
+  const cleanToolCallGroupOwners = new Map<string, string>();
   const cleanToolComponents = new Map<string, any>();
+  const cleanToolThemes = new Map<string, any>();
+  let renderCleanGroupSummary = (_lastToolCallId: string, _width: number): string[] => [];
+
+  const setCleanGroupMembers = (lastToolCallId: string, toolCallIds: string[]) => {
+    cleanGroupToolCallIds.set(lastToolCallId, toolCallIds);
+    for (const toolCallId of toolCallIds) cleanToolCallGroupOwners.set(toolCallId, lastToolCallId);
+  };
 
   const saveRenderMode = (mode: PrettyTuiMode) => {
     config = { ...config, mode };
@@ -707,6 +715,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     const originalMarkExecutionStarted = toolExecutionPrototype.markExecutionStarted;
     const originalSetExpanded = toolExecutionPrototype.setExpanded;
     const originalToolRender = toolExecutionPrototype.render;
+    const originalToolHandleMouse = toolExecutionPrototype.handleMouse;
     const renderedModeKey = Symbol("pretty-tui.tool-rendered-mode");
     const patchedMarkExecutionStarted = function (this: any) {
       if (supportedTools.has(this.toolName)) {
@@ -742,7 +751,64 @@ export default function prettyTui(pi: ExtensionAPI) {
         this[renderedModeKey] = renderMode;
         this.updateDisplay();
       }
-      return originalToolRender.call(this, width);
+
+      const groupOwner = cleanToolCallGroupOwners.get(this.toolCallId);
+      const groupToolCallIds = groupOwner ? cleanGroupToolCallIds.get(groupOwner) : undefined;
+      const childIndex = groupToolCallIds?.indexOf(this.toolCallId) ?? -1;
+      const showAsChild = renderMode === "clean" && childIndex >= 0 && cleanCompactToolCallIds.has(this.toolCallId);
+      if (!showAsChild || !groupOwner || !groupToolCallIds) {
+        return originalToolRender.call(this, width);
+      }
+
+      const childPrefix = childIndex === groupToolCallIds.length - 1 ? "  └─ " : "  ├─ ";
+      const continuation = childIndex === groupToolCallIds.length - 1 ? "     " : "  │  ";
+      const childWidth = Math.max(1, width - visibleWidth(childPrefix));
+      const lines = originalToolRender.call(this, childWidth);
+      if (lines.length === 0) return lines;
+
+      const decoratedContent = lines.slice(1).map((line: string, index: number) =>
+        (index === 0 ? childPrefix : continuation) + line
+      );
+      if (childIndex !== 0) return decoratedContent;
+      return [lines[0], ...renderCleanGroupSummary(groupOwner, width), ...decoratedContent];
+    };
+    const patchedToolHandleMouse = function (this: any, event: any) {
+      const groupOwner = cleanToolCallGroupOwners.get(this.toolCallId);
+      const groupToolCallIds = groupOwner ? cleanGroupToolCallIds.get(groupOwner) : undefined;
+      const childIndex = groupToolCallIds?.indexOf(this.toolCallId) ?? -1;
+      const showAsChild = renderMode === "clean" && childIndex >= 0 && cleanCompactToolCallIds.has(this.toolCallId);
+      if (!showAsChild || !groupToolCallIds) return originalToolHandleMouse.call(this, event);
+
+      const summaryHeight = childIndex === 0 ? renderCleanGroupSummary(groupOwner!, event.width).length : 0;
+      if (
+        childIndex === 0 &&
+        event.y > 0 &&
+        event.y <= summaryHeight &&
+        event.type === "click" &&
+        event.button === "left"
+      ) {
+        changingAllToolsExpansion = true;
+        try {
+          for (const toolCallId of groupToolCallIds) {
+            const component = cleanToolComponents.get(toolCallId);
+            if (component?.expanded) originalSetExpanded.call(component, false);
+            cleanCompactToolCallIds.delete(toolCallId);
+          }
+          for (const toolCallId of groupToolCallIds) cleanToolComponents.get(toolCallId)?.updateDisplay();
+        } finally {
+          changingAllToolsExpansion = false;
+        }
+        this.ui?.requestRender?.();
+        return { handled: true };
+      }
+
+      const childPrefixWidth = visibleWidth("  ├─ ");
+      return originalToolHandleMouse.call(this, {
+        ...event,
+        x: Math.max(0, event.x - childPrefixWidth),
+        y: event.y - summaryHeight + (childIndex === 0 ? 0 : 1),
+        width: Math.max(1, event.width - childPrefixWidth),
+      });
     };
 
     toolExecutionPrototype[toolExecutionPatchKey] = {
@@ -752,10 +818,13 @@ export default function prettyTui(pi: ExtensionAPI) {
       patchedSetExpanded,
       originalRender: originalToolRender,
       patchedRender: patchedToolRender,
+      originalHandleMouse: originalToolHandleMouse,
+      patchedHandleMouse: patchedToolHandleMouse,
     };
     toolExecutionPrototype.markExecutionStarted = patchedMarkExecutionStarted;
     toolExecutionPrototype.setExpanded = patchedSetExpanded;
     toolExecutionPrototype.render = patchedToolRender;
+    toolExecutionPrototype.handleMouse = patchedToolHandleMouse;
 
     pi.on("session_shutdown", () => {
       const patch = toolExecutionPrototype[toolExecutionPatchKey];
@@ -769,10 +838,14 @@ export default function prettyTui(pi: ExtensionAPI) {
       if (patch.patchedRender === toolExecutionPrototype.render) {
         toolExecutionPrototype.render = patch.originalRender;
       }
+      if (patch.patchedHandleMouse === toolExecutionPrototype.handleMouse) {
+        toolExecutionPrototype.handleMouse = patch.originalHandleMouse;
+      }
       if (
         toolExecutionPrototype.markExecutionStarted === patch.originalMarkExecutionStarted &&
         toolExecutionPrototype.setExpanded === patch.originalSetExpanded &&
-        toolExecutionPrototype.render === patch.originalRender
+        toolExecutionPrototype.render === patch.originalRender &&
+        toolExecutionPrototype.handleMouse === patch.originalHandleMouse
       ) {
         delete toolExecutionPrototype[toolExecutionPatchKey];
       }
@@ -794,7 +867,7 @@ export default function prettyTui(pi: ExtensionAPI) {
         failed: group.failed,
         activity: activityValueForHold(group.lastToolCallId, activity),
       });
-      cleanGroupToolCallIds.set(group.lastToolCallId, group.toolCallIds ?? []);
+      setCleanGroupMembers(group.lastToolCallId, group.toolCallIds ?? []);
     }
     cleanRun.count = 0;
     cleanRun.failed = 0;
@@ -846,6 +919,19 @@ export default function prettyTui(pi: ExtensionAPI) {
     },
   });
 
+  renderCleanGroupSummary = (lastToolCallId: string, width: number): string[] => {
+    const summaryTheme = cleanToolThemes.get(lastToolCallId);
+    if (!summaryTheme) return [];
+    const settled = settledSummaries.get(lastToolCallId);
+    if (settled) {
+      return block([summaryRow(summaryTheme, settled.count, settled.failed, settled.activity)]).render(width);
+    }
+    if (cleanRun.lastCompletedToolCallId === lastToolCallId && cleanRun.count > 0) {
+      return block([summaryRow(summaryTheme, cleanRun.count, cleanRun.failed, currentCleanActivity)]).render(width);
+    }
+    return [];
+  };
+
   /**
    * Clean mode keeps Running/Done rows in the existing tool components. This
    * avoids waiting for agent_end (which can be followed by retry/compaction),
@@ -853,6 +939,7 @@ export default function prettyTui(pi: ExtensionAPI) {
    */
   const cleanToolCall = (theme: any, name: string, toolCallId: string): Component => {
     knownToolCallIds.add(toolCallId);
+    cleanToolThemes.set(toolCallId, theme);
     return {
       render(width: number): string[] {
         if (renderMode !== "clean") return [];
@@ -955,7 +1042,9 @@ export default function prettyTui(pi: ExtensionAPI) {
     legacySummaryLastToolCallIds.clear();
     cleanCompactToolCallIds.clear();
     cleanGroupToolCallIds.clear();
+    cleanToolCallGroupOwners.clear();
     cleanToolComponents.clear();
+    cleanToolThemes.clear();
     clearToolActivityHolds();
     cleanRun.requestRender = undefined;
     cleanRun.count = 0;
@@ -983,7 +1072,7 @@ export default function prettyTui(pi: ExtensionAPI) {
         activity: "done",
       });
       if (group.toolCallIds?.length) {
-        cleanGroupToolCallIds.set(group.lastToolCallId, group.toolCallIds.slice());
+        setCleanGroupMembers(group.lastToolCallId, group.toolCallIds.slice());
       }
       if (entryId) legacySummaryLastToolCallIds.set(entryId, group.lastToolCallId);
       explicitSummaryIds.add(group.lastToolCallId);
@@ -992,7 +1081,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     const finishGroup = () => {
       if (lastToolCallId && count > 0) {
         lastFinishedGroup = { count, failed, lastToolCallId, toolCallIds: [...toolCalls] };
-        cleanGroupToolCallIds.set(lastToolCallId, [...toolCalls]);
+        setCleanGroupMembers(lastToolCallId, [...toolCalls]);
         if (!explicitSummaryIds.has(lastToolCallId)) {
           settledSummaries.set(lastToolCallId, { count, failed, activity: "done" });
         }
@@ -1158,7 +1247,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     cleanRun.count++;
     if (event.isError) cleanRun.failed++;
     cleanRun.lastCompletedToolCallId = event.toolCallId;
-    cleanGroupToolCallIds.set(event.toolCallId, cleanRun.currentToolCallIds.slice());
+    setCleanGroupMembers(event.toolCallId, cleanRun.currentToolCallIds.slice());
     if (cleanRun.activeToolCallId === event.toolCallId) {
       cleanRun.activeToolCallId = undefined;
       cleanRun.activeToolName = undefined;
