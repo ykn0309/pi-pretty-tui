@@ -760,9 +760,12 @@ export default function prettyTui(pi: ExtensionAPI) {
         return originalToolRender.call(this, width);
       }
 
-      const childPrefix = childIndex === groupToolCallIds.length - 1 ? "  └─ " : "  ├─ ";
-      const continuation = childIndex === groupToolCallIds.length - 1 ? "     " : "  │  ";
-      const childWidth = Math.max(1, width - visibleWidth(childPrefix));
+      const rawChildPrefix = childIndex === groupToolCallIds.length - 1 ? "  └─ " : "  ├─ ";
+      const rawContinuation = childIndex === groupToolCallIds.length - 1 ? "     " : "  │  ";
+      const childTheme = cleanToolThemes.get(this.toolCallId);
+      const childPrefix = childTheme ? childTheme.fg("dim", rawChildPrefix) : rawChildPrefix;
+      const continuation = childTheme ? childTheme.fg("dim", rawContinuation) : rawContinuation;
+      const childWidth = Math.max(1, width - visibleWidth(rawChildPrefix));
       const lines = originalToolRender.call(this, childWidth);
       if (lines.length === 0) return lines;
 
