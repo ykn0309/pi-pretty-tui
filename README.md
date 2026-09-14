@@ -40,7 +40,7 @@ Run `/pretty-tui` to choose a mode interactively, or set one directly:
 
 - `full` (default): preserve each tool's detailed call renderer and normal result preview. Press `Ctrl+O` to expand available output, diffs, and content.
 - `compact`: when collapsed, all supported built-in tools use concise one-line call summaries and final result summaries. Long commands, written content, edit diffs, and tool output stay hidden until expanded; press `Ctrl+O` to reveal the full details.
-- `clean`: collapse supported tool calls into a single `Running(...)` status; the activity slot shows a tool name as soon as its streamed tool call appears, such as `Running(3 tool calls · Read)`, and remains visible for at least 1 second before changing to `thinking...`. Once settled, the label becomes `Done(...)`. Visible assistant text starts a new tool group, so later calls get a separate status. Collapsed thinking blocks stay hidden without Pi's `Thinking...` placeholder; press `Ctrl+O` to reveal thinking content and normal expanded tool calls/output in transcript order.
+- `clean`: collapse supported tool calls into a single `Running(...)` status; the activity slot shows a tool name as soon as its streamed tool call appears, such as `Running(3 tool calls · Read)`, and remains visible for at least 1 second before changing to `thinking...`. Once settled, the label becomes `Done(...)`. Click a group status to reveal all tools in that group as compact summaries, then click an individual tool to toggle its full details. Visible assistant text starts a new tool group, so later calls get a separate status. Collapsed thinking blocks stay hidden without Pi's `Thinking...` placeholder; press `Ctrl+O` to reveal thinking content and all expanded tool calls/output in transcript order.
 
 Clean mode covers the built-in tools managed by this package: `read`, `bash`, `edit`, `write`, `grep`, `find`, and `ls`. Third-party tools keep their own rendering.
 
@@ -48,7 +48,7 @@ The selected mode applies immediately and persists in `~/.pi/agent/pretty-tui.js
 
 ## Expand tool output
 
-Press `Ctrl+O` (Pi's default `app.tools.expand` keybinding) to show or hide detailed output, edit diffs, complete `Write` content, full tool details, and thinking content in `compact` or `clean` mode.
+Press `Ctrl+O` (Pi's default `app.tools.expand` keybinding) to show or hide detailed output, edit diffs, complete `Write` content, full tool details, and thinking content in `compact` or `clean` mode. In clean mode, mouse interaction also supports progressive disclosure: click a group status for compact tool summaries, then click one tool for its full view.
 
 ## Compatibility notice
 
