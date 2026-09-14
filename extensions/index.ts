@@ -1,5 +1,6 @@
 import {
   AssistantMessageComponent,
+  CustomEditor,
   InteractiveMode,
   ToolExecutionComponent,
   UserMessageComponent,
@@ -136,6 +137,76 @@ export default function prettyTui(pi: ExtensionAPI) {
       }
     },
   });
+
+  // Give Pi's main prompt editor a complete rounded frame. Render the native
+  // editor at a two-column narrower width so cursor layout, wrapping, IME, and
+  // autocomplete remain native, then add one themed border column per side.
+  const customEditorPrototype = CustomEditor.prototype as any;
+  const editorFramePatchKey = Symbol.for("pretty-tui.rounded-editor-frame");
+  if (!customEditorPrototype[editorFramePatchKey]) {
+    const hadOwnRender = Object.prototype.hasOwnProperty.call(customEditorPrototype, "render");
+    const hadOwnHandleMouse = Object.prototype.hasOwnProperty.call(customEditorPrototype, "handleMouse");
+    const originalEditorRender = customEditorPrototype.render;
+    const originalEditorHandleMouse = customEditorPrototype.handleMouse;
+    const patchedEditorRender = function (this: any, width: number): string[] {
+      if (width < 3) return originalEditorRender.call(this, width);
+
+      const innerWidth = width - 2;
+      const lines = originalEditorRender.call(this, innerWidth) as string[];
+      const visibleLineCount = Math.max(0, Number(this.renderedVisibleLineCount) || 0);
+      const bottomBorderIndex = visibleLineCount + 1;
+      const fitInnerWidth = (line: string) =>
+        line + " ".repeat(Math.max(0, innerWidth - visibleWidth(line)));
+
+      return lines.map((line, index) => {
+        const fitted = fitInnerWidth(line);
+        if (index === 0) return this.borderColor("╭") + fitted + this.borderColor("╮");
+        if (index === bottomBorderIndex) return this.borderColor("╰") + fitted + this.borderColor("╯");
+        if (index < bottomBorderIndex) return this.borderColor("│") + fitted + this.borderColor("│");
+        // Autocomplete remains outside the input frame, aligned to its content.
+        return " " + fitted + " ";
+      });
+    };
+    const patchedEditorHandleMouse = function (this: any, event: any) {
+      if (event.width < 3) return originalEditorHandleMouse.call(this, event);
+      const innerWidth = event.width - 2;
+      return originalEditorHandleMouse.call(this, {
+        ...event,
+        x: Math.max(0, Math.min(innerWidth - 1, event.x - 1)),
+        width: innerWidth,
+      });
+    };
+
+    customEditorPrototype[editorFramePatchKey] = {
+      hadOwnRender,
+      hadOwnHandleMouse,
+      originalRender: originalEditorRender,
+      originalHandleMouse: originalEditorHandleMouse,
+      patchedRender: patchedEditorRender,
+      patchedHandleMouse: patchedEditorHandleMouse,
+    };
+    customEditorPrototype.render = patchedEditorRender;
+    customEditorPrototype.handleMouse = patchedEditorHandleMouse;
+
+    pi.on("session_shutdown", () => {
+      const patch = customEditorPrototype[editorFramePatchKey];
+      if (!patch) return;
+      if (patch.patchedRender === customEditorPrototype.render) {
+        if (patch.hadOwnRender) customEditorPrototype.render = patch.originalRender;
+        else delete customEditorPrototype.render;
+      }
+      if (patch.patchedHandleMouse === customEditorPrototype.handleMouse) {
+        if (patch.hadOwnHandleMouse) customEditorPrototype.handleMouse = patch.originalHandleMouse;
+        else delete customEditorPrototype.handleMouse;
+      }
+      if (
+        customEditorPrototype.render === patch.originalRender &&
+        customEditorPrototype.handleMouse === patch.originalHandleMouse
+      ) {
+        delete customEditorPrototype[editorFramePatchKey];
+      }
+    });
+  }
 
   // Render user prompts as a titled, rounded frame while preserving Pi's
   // original Markdown component, wrapping, output padding, and OSC 133 zones.

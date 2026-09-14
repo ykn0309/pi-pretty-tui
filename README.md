@@ -7,6 +7,7 @@ A visual refinement extension for the [Pi coding agent](https://pi.dev/). It pro
 ## Features
 
 - Rounded, titled `User` message frames with theme-aware borders, filled backgrounds, and Markdown support
+- A rounded prompt editor that preserves native cursor, IME, autocomplete, and mouse behavior
 - Compact `Read`, `Bash`, `Edit`, `Write`, `Grep`, `Find`, and `List` calls
 - Concise per-tool call and result summaries with expandable details
 - Native-style `Write` previews in `full` mode: first 10 lines when collapsed, full content when expanded
@@ -52,7 +53,7 @@ Press `Ctrl+O` (Pi's default `app.tools.expand` keybinding) to show or hide deta
 
 ## Compatibility notice
 
-Tool rendering uses Pi's documented extension APIs. Clean thinking and active-tool state follow Pi's built-in expansion and execution transitions through its exported interactive components. Framing native user messages and changing unordered-list markers require reload-safe runtime patches because Pi does not currently expose public renderer hooks for those presentation details. User Markdown and terminal semantic zones remain handled by Pi, and code blocks use Pi's original renderer without modification.
+Tool rendering uses Pi's documented extension APIs. Clean thinking and active-tool state follow Pi's built-in expansion and execution transitions through its exported interactive components. Framing native user messages, rounding the native prompt editor, and changing unordered-list markers require reload-safe runtime patches because Pi does not currently expose public renderer hooks for those presentation details. User Markdown and terminal semantic zones remain handled by Pi, and code blocks use Pi's original renderer without modification.
 
 No Pi source files are modified. Runtime patches are removed during session shutdown, but a future Pi release may require this extension to be updated.
 
