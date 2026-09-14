@@ -2,6 +2,7 @@ import {
   AssistantMessageComponent,
   InteractiveMode,
   ToolExecutionComponent,
+  UserMessageComponent,
   createBashTool,
   createEditTool,
   createFindTool,
@@ -40,7 +41,7 @@ const loadConfig = (path: string): PrettyTuiConfig => {
   }
 };
 
-/** Polished tool calls and list rendering for Pi's TUI. */
+/** Polished user messages, tool calls, and list rendering for Pi's TUI. */
 export default function prettyTui(pi: ExtensionAPI) {
   const cwd = process.cwd();
   const configPath = join(getAgentDir(), "pretty-tui.json");
@@ -104,6 +105,74 @@ export default function prettyTui(pi: ExtensionAPI) {
       }
     },
   });
+
+  // Render user prompts as a titled, rounded frame while preserving Pi's
+  // original Markdown component, wrapping, output padding, and OSC 133 zones.
+  const userMessagePrototype = UserMessageComponent.prototype as any;
+  const userMessagePatchKey = Symbol.for("pretty-tui.user-message-frame");
+  if (!userMessagePrototype[userMessagePatchKey]) {
+    const originalUserMessageRebuild = userMessagePrototype.rebuild;
+    const patchedUserMessageRebuild = function (this: any) {
+      originalUserMessageRebuild.call(this);
+      const content = this.children?.[0] as any;
+      if (!content) return;
+
+      // The frame replaces Pi's filled background and owns the spacing.
+      content.paddingX = 0;
+      content.paddingY = 0;
+      content.setBgFn?.(undefined);
+      content.invalidate?.();
+
+      const outputPad = Math.max(0, Number(this.outputPad) || 0);
+      const markdownTheme = this.markdownTheme;
+      const border = (text: string) => markdownTheme.quoteBorder(text);
+      const frame: Component = {
+        render(width: number): string[] {
+          const sidePad = Math.min(outputPad, Math.max(0, Math.floor((width - 1) / 2)));
+          const outer = " ".repeat(sidePad);
+          const frameWidth = Math.max(1, width - sidePad * 2);
+          if (frameWidth < 4) {
+            return content.render(frameWidth).map((line: string) => outer + line);
+          }
+
+          const title = " User ";
+          const topStart = "╭─";
+          const topTail = "─".repeat(Math.max(0, frameWidth - visibleWidth(topStart) - visibleWidth(title) - 1));
+          const top = border(topStart + markdownTheme.bold(title) + topTail + "╮");
+          const bottom = border("╰" + "─".repeat(Math.max(0, frameWidth - 2)) + "╯");
+          const contentWidth = Math.max(1, frameWidth - 4);
+          const body = content.render(contentWidth).map((line: string) => {
+            const padding = " ".repeat(Math.max(0, contentWidth - visibleWidth(line)));
+            return border("│ ") + line + padding + border(" │");
+          });
+          return [outer + top, ...body.map((line: string) => outer + line), outer + bottom];
+        },
+        invalidate() {
+          content.invalidate?.();
+        },
+      };
+
+      this.clear();
+      this.addChild(frame);
+    };
+
+    userMessagePrototype[userMessagePatchKey] = {
+      originalRebuild: originalUserMessageRebuild,
+      patchedRebuild: patchedUserMessageRebuild,
+    };
+    userMessagePrototype.rebuild = patchedUserMessageRebuild;
+
+    pi.on("session_shutdown", () => {
+      const patch = userMessagePrototype[userMessagePatchKey];
+      if (!patch) return;
+      if (patch.patchedRebuild === userMessagePrototype.rebuild) {
+        userMessagePrototype.rebuild = patch.originalRebuild;
+      }
+      if (userMessagePrototype.rebuild === patch.originalRebuild) {
+        delete userMessagePrototype[userMessagePatchKey];
+      }
+    });
+  }
 
   // Pi's built-in assistant component turns hidden thinking into a static
   // "Thinking..." label. In collapsed clean mode, omit that label entirely;
