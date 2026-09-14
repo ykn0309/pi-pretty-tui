@@ -64,6 +64,23 @@ export default function prettyTui(pi: ExtensionAPI) {
     for (const toolCallId of toolCallIds) cleanToolCallGroupOwners.set(toolCallId, lastToolCallId);
   };
 
+  const isCleanGroupRevealed = (toolCallId: string): boolean => {
+    if (cleanCompactToolCallIds.has(toolCallId)) return true;
+    const groupOwner = cleanToolCallGroupOwners.get(toolCallId);
+    const groupToolCallIds = groupOwner ? cleanGroupToolCallIds.get(groupOwner) : undefined;
+    return groupToolCallIds?.some((id) => cleanCompactToolCallIds.has(id)) ?? false;
+  };
+
+  const cleanThemeForToolCall = (toolCallId: string): any => {
+    const directTheme = cleanToolThemes.get(toolCallId);
+    if (directTheme) return directTheme;
+    const groupOwner = cleanToolCallGroupOwners.get(toolCallId);
+    const groupToolCallIds = groupOwner ? cleanGroupToolCallIds.get(groupOwner) : undefined;
+    return groupToolCallIds
+      ?.map((id) => cleanToolThemes.get(id))
+      .find(Boolean);
+  };
+
   const saveRenderMode = (mode: PrettyTuiMode) => {
     config = { ...config, mode };
     mkdirSync(getAgentDir(), { recursive: true });
@@ -740,7 +757,7 @@ export default function prettyTui(pi: ExtensionAPI) {
         !changingAllToolsExpansion &&
         expanded &&
         !this.expanded &&
-        !cleanCompactToolCallIds.has(this.toolCallId) &&
+        !isCleanGroupRevealed(this.toolCallId) &&
         groupToolCallIds?.length
       ) {
         revealCleanGroup(groupToolCallIds, this.ui);
@@ -758,14 +775,14 @@ export default function prettyTui(pi: ExtensionAPI) {
       const groupOwner = cleanToolCallGroupOwners.get(this.toolCallId);
       const groupToolCallIds = groupOwner ? cleanGroupToolCallIds.get(groupOwner) : undefined;
       const childIndex = groupToolCallIds?.indexOf(this.toolCallId) ?? -1;
-      const showAsChild = renderMode === "clean" && childIndex >= 0 && cleanCompactToolCallIds.has(this.toolCallId);
+      const showAsChild = renderMode === "clean" && childIndex >= 0 && isCleanGroupRevealed(this.toolCallId);
       if (!showAsChild || !groupOwner || !groupToolCallIds) {
         return originalToolRender.call(this, width);
       }
 
       const rawChildPrefix = childIndex === groupToolCallIds.length - 1 ? "  └─ " : "  ├─ ";
       const rawContinuation = childIndex === groupToolCallIds.length - 1 ? "     " : "  │  ";
-      const childTheme = cleanToolThemes.get(this.toolCallId);
+      const childTheme = cleanThemeForToolCall(this.toolCallId);
       const childPrefix = childTheme ? childTheme.fg("dim", rawChildPrefix) : rawChildPrefix;
       const continuation = childTheme ? childTheme.fg("dim", rawContinuation) : rawContinuation;
       const childWidth = Math.max(1, width - visibleWidth(rawChildPrefix));
@@ -782,7 +799,7 @@ export default function prettyTui(pi: ExtensionAPI) {
       const groupOwner = cleanToolCallGroupOwners.get(this.toolCallId);
       const groupToolCallIds = groupOwner ? cleanGroupToolCallIds.get(groupOwner) : undefined;
       const childIndex = groupToolCallIds?.indexOf(this.toolCallId) ?? -1;
-      const showAsChild = renderMode === "clean" && childIndex >= 0 && cleanCompactToolCallIds.has(this.toolCallId);
+      const showAsChild = renderMode === "clean" && childIndex >= 0 && isCleanGroupRevealed(this.toolCallId);
       const isLeftClick = event.type === "click" && event.button === "left";
 
       // Pi normally ignores tool clicks until a result exists. Clean mode can
@@ -946,7 +963,7 @@ export default function prettyTui(pi: ExtensionAPI) {
   });
 
   renderCleanGroupSummary = (lastToolCallId: string, width: number): string[] => {
-    const summaryTheme = cleanToolThemes.get(lastToolCallId);
+    const summaryTheme = cleanThemeForToolCall(lastToolCallId);
     if (!summaryTheme) return [];
     const settled = settledSummaries.get(lastToolCallId);
     if (settled) {
@@ -1025,12 +1042,12 @@ export default function prettyTui(pi: ExtensionAPI) {
     toolCallId: string,
     expanded: boolean,
     _executionStarted = false,
-  ): boolean => renderMode === "clean" && !expanded && !cleanCompactToolCallIds.has(toolCallId);
+  ): boolean => renderMode === "clean" && !expanded && !isCleanGroupRevealed(toolCallId);
 
   const useCompactToolView = (toolCallId: string, expanded: boolean): boolean =>
     !expanded && (
       renderMode === "compact" ||
-      (renderMode === "clean" && cleanCompactToolCallIds.has(toolCallId))
+      (renderMode === "clean" && isCleanGroupRevealed(toolCallId))
     );
 
   pi.registerEntryRenderer<ToolSummaryData>("pretty-tui-tool-summary", (entry, { expanded }, theme) => ({
