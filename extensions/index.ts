@@ -1308,12 +1308,6 @@ export default function prettyTui(pi: ExtensionAPI) {
 
   pi.on("session_start", (_event, ctx) => restoreCleanSession(ctx));
   pi.on("session_tree", (_event, ctx) => restoreCleanSession(ctx));
-  pi.on("session_compact", () => {
-    // Tool components removed by compaction must no longer suppress the
-    // durable summary fallback. Remaining components register again as Pi
-    // renders the rebuilt transcript.
-    knownToolCallIds.clear();
-  });
 
   const hasVisibleAssistantText = (message: any): boolean =>
     message?.role === "assistant" && messageHasVisibleText(message);
