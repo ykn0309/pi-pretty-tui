@@ -604,6 +604,70 @@ export default function prettyTui(pi: ExtensionAPI) {
       nextTokenType?: string,
       styleContext?: any,
     ): string[] {
+      if (token?.type === "heading") {
+        const level = Math.max(1, Math.min(6, Number(token.depth) || 1));
+        const maxWidth = Math.max(1, width);
+        const addHeadingSpacing = (lines: string[]) => {
+          if (nextTokenType && nextTokenType !== "space") lines.push("");
+          return lines;
+        };
+        const headingStyle = (text: string) => this.theme.heading(text);
+        const titleStyle =
+          level === 1 || level === 3
+            ? (text: string) => headingStyle(this.theme.bold(this.theme.underline(text)))
+            : level === 2 || level === 4
+              ? (text: string) => headingStyle(this.theme.bold(text))
+              : level === 5
+                ? headingStyle
+                : (text: string) => this.theme.quote(this.theme.italic(text));
+        const titleContext = {
+          applyText: titleStyle,
+          stylePrefix: this.getStylePrefix(titleStyle),
+        };
+        const title = this.renderInlineTokens(token.tokens || [], titleContext);
+
+        if (level <= 2 && maxWidth >= 6) {
+          const heavy = level === 1;
+          const horizontal = heavy ? "━" : "─";
+          const vertical = heavy ? "┃" : "│";
+          const innerWidth = maxWidth - 4;
+          const titleLines = wrapTextWithAnsi(title, Math.max(1, innerWidth));
+          const frameStyle = (text: string) => headingStyle(this.theme.bold(text));
+          // Reverse video turns the theme's heading foreground into a matching,
+          // terminal-aware fill without hard-coding light or dark RGB values.
+          const fill = (text: string) => `\x1b[7m${text}\x1b[27m`;
+          const lines = [
+            fill(frameStyle(`╭${horizontal.repeat(maxWidth - 2)}╮`)),
+            ...titleLines.map((line: string) => {
+              const padding = " ".repeat(Math.max(0, innerWidth - visibleWidth(line)));
+              return fill(
+                frameStyle(`${vertical} `) + line + frameStyle(`${padding} ${vertical}`),
+              );
+            }),
+            fill(frameStyle(`╰${horizontal.repeat(maxWidth - 2)}╯`)),
+          ];
+          return addHeadingSpacing(lines);
+        }
+
+        if (level === 5 && maxWidth >= 8) {
+          const prefix = "┄┄ ";
+          const suffix = " ┄┄";
+          const contentWidth = Math.max(
+            1,
+            maxWidth - visibleWidth(prefix) - visibleWidth(suffix),
+          );
+          const wrapped = wrapTextWithAnsi(title, contentWidth);
+          const lines = wrapped.map((line: string, index: number) => {
+            const left = index === 0 ? this.theme.heading(prefix) : " ".repeat(visibleWidth(prefix));
+            const right = index === wrapped.length - 1 ? this.theme.heading(suffix) : "";
+            return left + line + right;
+          });
+          return addHeadingSpacing(lines);
+        }
+
+        return addHeadingSpacing(wrapTextWithAnsi(title, maxWidth));
+      }
+
       if (token?.type !== "code") {
         return originalRenderToken.call(this, token, width, nextTokenType, styleContext);
       }

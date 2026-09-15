@@ -8,7 +8,7 @@ A beautiful, polished TUI for the [Pi coding agent](https://pi.dev/).
 
 - **Collapsible tool activity:** instead of filling the conversation with individual tool calls, supported tools are collected into a single `Running(...)` row while work is in progress and a quiet `Done(...)` row when it finishes. Click the group to reveal its compact child calls, click any child for full details, and click the parent again to collapse everything.
 - **Useful details on demand:** tool-aware summaries keep paths, commands, results, diffs, file previews, and live shell output concise without removing access to the original content.
-- **A cohesive visual finish:** rounded user messages and prompt input, theme-aware colors, cleaner Markdown lists, and rounded syntax-highlighted code blocks make the entire TUI feel intentional. In fullscreen, each fenced code block also includes a native-feeling `[Copy]` control.
+- **A cohesive visual finish:** rounded user messages and prompt input, theme-aware colors, a clear framed Markdown heading hierarchy, cleaner lists, and rounded syntax-highlighted code blocks make the entire TUI feel intentional. In fullscreen, each fenced code block also includes a native-feeling `[Copy]` control.
 
 Collapsible grouping covers Pi's built-in `read`, `bash`, `edit`, `write`, `grep`, `find`, and `ls` tools. Third-party tools keep their own rendering, and Pi's cursor, IME, autocomplete, mouse interaction, and tool execution behavior remain intact.
 

@@ -229,10 +229,37 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
     InteractiveMode.prototype.renderSessionEntries.call({ ui: fullscreenUi }, []);
   } catch {}
   const markdownTheme = new Proxy({
+    heading: (text) => `\x1b[33m${text}\x1b[39m`,
+    quote: (text) => `\x1b[90m${text}\x1b[39m`,
+    bold: (text) => `\x1b[1m${text}\x1b[22m`,
+    italic: (text) => `\x1b[3m${text}\x1b[23m`,
+    underline: (text) => `\x1b[4m${text}\x1b[24m`,
     codeBlock: (text) => text,
     codeBlockBorder: (text) => `\x1b[90m${text}\x1b[39m`,
     highlightCode: (code) => code.split("\n"),
   }, { get: (target, key) => target[key] ?? ((text) => text) });
+
+  const headingCases = [
+    ["# One", ["╭━━━━━━━━━━━━━━━━━━╮", "┃ One              ┃", "╰━━━━━━━━━━━━━━━━━━╯"]],
+    ["## Two", ["╭──────────────────╮", "│ Two              │", "╰──────────────────╯"]],
+    ["### Three", ["Three"]],
+    ["#### Four", ["Four"]],
+    ["##### Five", ["┄┄ Five ┄┄"]],
+    ["###### Six", ["Six"]],
+  ];
+  for (const [source, expected] of headingCases) {
+    const rendered = new Markdown(source, 0, 0, markdownTheme).render(20);
+    const unstyled = rendered.map((line) =>
+      line.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").trimEnd(),
+    );
+    assert.deepEqual(unstyled, expected);
+    assert.ok(rendered.every((line) => visibleWidth(line) <= 20));
+  }
+  const filledHeading = new Markdown("# Filled", 0, 0, markdownTheme).render(20);
+  assert.ok(filledHeading.every((line) => line.includes("\x1b[7m") && line.includes("\x1b[27m")));
+  const narrowHeading = new Markdown("# Narrow heading", 0, 0, markdownTheme).render(5);
+  assert.ok(narrowHeading.every((line) => visibleWidth(line) <= 5));
+
   const markdown = new Markdown("```ts\nconst a = 1;\n```\n\n~~~json\n{\"ok\":true}\n~~~", 2, 1, markdownTheme);
   const lines = markdown.render(42);
   const plain = lines.map((line) => line.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, ""));
@@ -311,8 +338,10 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
 }
 
 const patchedSelectionHandler = TuiAltScreen.prototype.handleSelectionMouseEvent;
+const patchedMarkdownRenderToken = Markdown.prototype.renderToken;
 await emit("session_shutdown");
 assert.equal(Markdown.prototype.handleMouse, undefined);
+assert.notEqual(Markdown.prototype.renderToken, patchedMarkdownRenderToken);
 assert.notEqual(TuiAltScreen.prototype.handleSelectionMouseEvent, patchedSelectionHandler);
 rmSync(agentDir, { recursive: true, force: true });
 console.log("Regression suite passed.");
