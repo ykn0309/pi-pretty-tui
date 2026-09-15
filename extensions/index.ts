@@ -1072,17 +1072,22 @@ export default function prettyTui(pi: ExtensionAPI) {
     count: number,
     failed: number,
     activity: DisplayValue = "done",
+    collapsedDone = false,
   ): DisplayRow => ({
     prefix: () => {
       const currentActivity = typeof activity === "function" ? activity() : activity;
-      const color = currentActivity === "done" ? "success" : "accent";
+      const color = currentActivity === "done"
+        ? collapsedDone ? "thinkingText" : "success"
+        : "accent";
       return theme.fg(color, "● ");
     },
     continuation: "  ",
     content: () => {
       const currentActivity = typeof activity === "function" ? activity() : activity;
       const label = currentActivity === "done" ? "Done" : "Running";
-      const color = label === "Done" ? "success" : "accent";
+      const color = label === "Done"
+        ? collapsedDone ? "thinkingText" : "success"
+        : "accent";
       return theme.fg(color, theme.bold(label)) +
         theme.fg("dim", "(") +
         theme.fg("text", summaryText(count, failed, currentActivity)) + theme.fg("dim", ")");
@@ -1124,7 +1129,13 @@ export default function prettyTui(pi: ExtensionAPI) {
 
         const settledSummary = settledSummaries.get(toolCallId);
         if (settledSummary) {
-          return block([summaryRow(theme, settledSummary.count, settledSummary.failed, settledSummary.activity)]).render(width);
+          return block([summaryRow(
+            theme,
+            settledSummary.count,
+            settledSummary.failed,
+            settledSummary.activity,
+            true,
+          )]).render(width);
         }
         if (cleanRun.settled) return [];
 
@@ -1208,7 +1219,7 @@ export default function prettyTui(pi: ExtensionAPI) {
       // accidentally store the transient responding... activity, so always
       // normalize their display to Done.
       return block(missingGroups.map((group) =>
-        summaryRow(theme, group.count, group.failed, "done")
+        summaryRow(theme, group.count, group.failed, "done", true)
       )).render(width);
     },
     invalidate() {},
