@@ -61,7 +61,7 @@ In fullscreen TUI mode, fenced Markdown code blocks include a clickable `[Copy]`
 pi --tui-mode fullscreen
 ```
 
-Clicking it copies only the code content—not the rounded border—through Pi's native clipboard integration and shows a success or error notification. The control is hidden in regular TUI mode because the terminal keeps mouse input for text selection and scrolling there.
+Clicking it copies only the code content—not the rounded border—through Pi's native fullscreen clipboard path and shows the same transient `Copied!` or `Copy failed` flash used by direct text selection. The control is hidden in regular TUI mode because the terminal keeps mouse input for text selection and scrolling there.
 
 ## Development
 

@@ -217,8 +217,16 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
 // Fullscreen Markdown shows per-block Copy controls with precise hit regions;
 // regular mode hides them and invalidation drops stale regions.
 {
+  const nativeCopies = [];
+  const fullscreenUi = {
+    mode: "fullscreen",
+    async copyTextToClipboard(text) {
+      nativeCopies.push(text);
+      return true;
+    },
+  };
   try {
-    InteractiveMode.prototype.renderSessionEntries.call({ ui: { mode: "fullscreen" } }, []);
+    InteractiveMode.prototype.renderSessionEntries.call({ ui: fullscreenUi }, []);
   } catch {}
   const markdownTheme = new Proxy({
     codeBlock: (text) => text,
@@ -237,6 +245,17 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
     const x = line.indexOf("[Copy]") + 1;
     assert.equal(markdown.handleMouse({ type: "press", button: "left", x, y, width: 42, height: lines.length })?.handled, true);
   }
+  const firstCopyX = headers[0].line.indexOf("[Copy]") + 1;
+  assert.equal(markdown.handleMouse({
+    type: "click",
+    button: "left",
+    x: firstCopyX,
+    y: headers[0].y,
+    width: 42,
+    height: lines.length,
+  })?.handled, true);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(nativeCopies, ["const a = 1;"]);
   assert.ok(lines.every((line) => visibleWidth(line) <= 42));
   for (const width of [1, 4, 7, 8, 17, 18, 24]) {
     const narrow = new Markdown("```sh\necho 12345678901234567890\n```", 0, 0, markdownTheme).render(width);

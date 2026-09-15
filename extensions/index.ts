@@ -57,6 +57,7 @@ export default function prettyTui(pi: ExtensionAPI) {
   let cleanToolsExpanded = false;
   let cleanContextCompacted = false;
   let fullscreenTui = false;
+  let currentTui: any;
   let currentExtensionUi: any;
   let changingAllToolsExpansion = false;
   const cleanCompactToolCallIds = new Set<string>();
@@ -418,7 +419,8 @@ export default function prettyTui(pi: ExtensionAPI) {
     };
 
     const patchedRenderSessionEntries = function (this: any, entries: any[], options?: any) {
-      fullscreenTui = this.ui?.mode === "fullscreen";
+      currentTui = this.ui;
+      fullscreenTui = currentTui?.mode === "fullscreen";
       // buildContextEntries() prepends the latest compaction for model context,
       // while Pi's live compaction UI appends it chronologically. Keep reloads
       // and transcript rebuilds consistent with that live presentation.
@@ -431,7 +433,8 @@ export default function prettyTui(pi: ExtensionAPI) {
 
     const patchedSwitchTuiMode = function (this: any, ...args: any[]) {
       const result = originalSwitchTuiMode.apply(this, args);
-      fullscreenTui = this.ui?.mode === "fullscreen";
+      currentTui = this.ui;
+      fullscreenTui = currentTui?.mode === "fullscreen";
       return result;
     };
 
@@ -449,6 +452,7 @@ export default function prettyTui(pi: ExtensionAPI) {
 
     pi.on("session_shutdown", () => {
       fullscreenTui = false;
+      currentTui = undefined;
       currentExtensionUi = undefined;
       const patch = interactiveModePrototype[toolsExpansionPatchKey];
       if (!patch) return;
@@ -613,20 +617,18 @@ export default function prettyTui(pi: ExtensionAPI) {
         );
         if (region) {
           if (event.type === "click") {
-            void copyToClipboard(region.code)
-              .then(() => {
-                const lineCount = region.code === "" ? 0 : region.code.split("\n").length;
-                currentExtensionUi?.notify(
-                  `Copied ${lineCount} line${lineCount === 1 ? "" : "s"} of code`,
-                  "info",
-                );
-              })
-              .catch((error: unknown) => {
-                currentExtensionUi?.notify(
-                  `Copy failed: ${error instanceof Error ? error.message : String(error)}`,
-                  "error",
-                );
+            if (typeof currentTui?.copyTextToClipboard === "function") {
+              // Match fullscreen selection exactly: use Pi TUI's clipboard path
+              // and its transient "Copied!" / "Copy failed" flash feedback.
+              void Promise.resolve(currentTui.copyTextToClipboard(region.code)).catch(() => {
+                currentTui?.flash?.("Copy failed");
               });
+            } else {
+              // Defensive fallback for older Pi versions without the fullscreen helper.
+              void copyToClipboard(region.code)
+                .then(() => currentExtensionUi?.notify("Copied!", "info"))
+                .catch(() => currentExtensionUi?.notify("Copy failed", "error"));
+            }
           }
           return { handled: true, render: false };
         }
