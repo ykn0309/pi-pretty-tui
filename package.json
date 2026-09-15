@@ -1,7 +1,7 @@
 {
   "name": "pi-pretty-tui",
   "version": "0.1.6",
-  "description": "Polished user messages, tool calls, and list rendering for the Pi coding agent TUI",
+  "description": "A beautiful, polished TUI for the Pi coding agent",
   "license": "MIT",
   "author": "Kainan Yang <ykn0309@whu.edu.cn>",
   "type": "module",
@@ -28,6 +28,7 @@
     "extensions",
     "assets",
     "README.md",
+    "README.zh-CN.md",
     "LICENSE"
   ],
   "engines": {

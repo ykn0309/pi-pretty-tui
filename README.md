@@ -1,6 +1,8 @@
 # pi-pretty-tui
 
-A visual refinement extension for the [Pi coding agent](https://pi.dev/). It provides framed user messages, compact tool-call rendering, and cleaner list presentation while preserving Pi's built-in behavior.
+English | [简体中文](./README.zh-CN.md)
+
+A beautiful, polished TUI for the [Pi coding agent](https://pi.dev/).
 
 ![pi-pretty-tui preview](./assets/screenshot.png)
 
