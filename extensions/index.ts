@@ -1485,6 +1485,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     let failed = 0;
     let lastToolCallId: string | undefined;
     let lastFinishedGroup: ToolSummaryGroup | undefined;
+    const inferredGroups: ToolSummaryGroup[] = [];
     const toolCalls = new Set<string>();
     const explicitSummaryIds = new Set<string>();
 
@@ -1504,6 +1505,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     const finishGroup = () => {
       if (lastToolCallId && count > 0) {
         lastFinishedGroup = { count, failed, lastToolCallId, toolCallIds: [...toolCalls] };
+        inferredGroups.push(lastFinishedGroup);
         setCleanGroupMembers(lastToolCallId, [...toolCalls]);
         if (!explicitSummaryIds.has(lastToolCallId)) {
           settledSummaries.set(lastToolCallId, { count, failed, activity: "done" });
@@ -1513,6 +1515,23 @@ export default function prettyTui(pi: ExtensionAPI) {
       failed = 0;
       lastToolCallId = undefined;
       toolCalls.clear();
+    };
+
+    const splitSummaryAtTranscriptBoundaries = (group: ToolSummaryGroup): ToolSummaryGroup[] => {
+      if (!group.toolCallIds?.length) return [group];
+      const persistedIds = new Set(group.toolCallIds);
+      const overlappingGroups = inferredGroups.filter((inferred) =>
+        inferred.toolCallIds?.some((toolCallId) => persistedIds.has(toolCallId)),
+      );
+      if (overlappingGroups.length <= 1) return [group];
+
+      // Older clean-mode summaries could span a user steering message because
+      // only visible assistant text ended a live group. Prefer the transcript's
+      // user/text boundaries so parent rows and expanded children stay chronological.
+      return overlappingGroups.map((inferred) => ({
+        ...inferred,
+        toolCallIds: inferred.toolCallIds?.filter((toolCallId) => persistedIds.has(toolCallId)),
+      }));
     };
 
     const consumeGroupCoveredBySummary = (groups: ToolSummaryGroup[]) => {
@@ -1543,7 +1562,9 @@ export default function prettyTui(pi: ExtensionAPI) {
           const validGroups = data.groups.filter(
             (group): group is ToolSummaryGroup => Boolean(group?.lastToolCallId && group.count > 0),
           );
-          for (const group of validGroups) rememberGroup(group);
+          for (const group of validGroups.flatMap(splitSummaryAtTranscriptBoundaries)) {
+            rememberGroup(group);
+          }
           consumeGroupCoveredBySummary(validGroups);
         } else if (data?.lastToolCallId) {
           const group = {
@@ -1646,6 +1667,15 @@ export default function prettyTui(pi: ExtensionAPI) {
       }
     }
   };
+
+  // A delivered steering message is also a chronological group boundary.
+  // message_start runs before Pi adds the user component to the transcript,
+  // so settling here keeps the previous parent row above that message.
+  pi.on("message_start", (event) => {
+    if (event.message.role !== "user") return;
+    finishCleanGroup("done");
+    settleLastCleanGroup();
+  });
 
   // A visible assistant response is the boundary between tool groups. Do
   // this during streaming so a following tool call cannot inherit the prior
