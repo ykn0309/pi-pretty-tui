@@ -9,7 +9,6 @@ A beautiful, polished TUI for the [Pi coding agent](https://pi.dev/).
 ## Features
 
 - **Collapsible tool activity:** instead of filling the conversation with individual tool calls, supported tools are collected into a single `Running(...)` row while work is in progress and a quiet `Done(...)` row when it finishes. Click the group to reveal its compact child calls, click any child for full details, and click the parent again to collapse everything.
-- **Clear conversation structure:** assistant text, steering messages, and compaction summaries create natural group boundaries, so tool activity stays in the correct transcript position even across long or interrupted tasks. Thinking details remain out of the way until you choose to expand them.
 - **Useful details on demand:** tool-aware summaries keep paths, commands, results, diffs, file previews, and live shell output concise without removing access to the original content.
 - **A cohesive visual finish:** rounded user messages and prompt input, theme-aware colors, cleaner Markdown lists, and rounded syntax-highlighted code blocks make the entire TUI feel intentional. In fullscreen, each fenced code block also includes a native-feeling `[Copy]` control.
 
