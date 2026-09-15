@@ -4,8 +4,6 @@ English | [简体中文](./README.zh-CN.md)
 
 A beautiful, polished TUI for the [Pi coding agent](https://pi.dev/).
 
-![pi-pretty-tui preview](./assets/screenshot.png)
-
 ## Features
 
 - **Collapsible tool activity:** instead of filling the conversation with individual tool calls, supported tools are collected into a single `Running(...)` row while work is in progress and a quiet `Done(...)` row when it finishes. Click the group to reveal its compact child calls, click any child for full details, and click the parent again to collapse everything.
