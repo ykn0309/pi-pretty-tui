@@ -1088,9 +1088,10 @@ export default function prettyTui(pi: ExtensionAPI) {
       const color = label === "Done"
         ? collapsedDone ? "thinkingText" : "success"
         : "accent";
+      const detailColor = label === "Done" && collapsedDone ? "thinkingText" : "text";
       return theme.fg(color, theme.bold(label)) +
         theme.fg("dim", "(") +
-        theme.fg("text", summaryText(count, failed, currentActivity)) + theme.fg("dim", ")");
+        theme.fg(detailColor, summaryText(count, failed, currentActivity)) + theme.fg("dim", ")");
     },
   });
 
