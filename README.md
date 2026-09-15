@@ -63,6 +63,17 @@ pi --tui-mode fullscreen
 
 Clicking it copies only the code content through Pi's native clipboard integration and shows a success or error notification. The control is hidden in regular TUI mode because the terminal keeps mouse input for text selection and scrolling there. Code text remains directly selectable, and the decorative rules contain no side-border characters.
 
+## Development
+
+Run the committed regression suite before changing renderer state or transcript grouping:
+
+```sh
+npm install
+npm test
+```
+
+The suite covers live and restored steering/compaction boundaries, parallel completion ownership, orphaned tool calls, duplicate-summary prevention, and fullscreen code-block copy hit regions. GitHub Actions runs the same checks on every push and pull request.
+
 ## Compatibility notice
 
 Tool rendering uses Pi's documented extension APIs. Clean thinking and active-tool state follow Pi's built-in expansion and execution transitions through its exported interactive components. Framing native user messages, rounding the native prompt editor, changing unordered-list markers, and enhancing fenced code blocks require reload-safe runtime patches because Pi does not currently expose public renderer hooks for those presentation details. Markdown parsing, syntax highlighting, and terminal semantic zones remain handled by Pi.
