@@ -52,6 +52,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     ? configuredMode
     : "clean";
   let cleanToolsExpanded = false;
+  let cleanContextCompacted = false;
   let changingAllToolsExpansion = false;
   const cleanCompactToolCallIds = new Set<string>();
   const cleanGroupToolCallIds = new Map<string, string[]>();
@@ -375,6 +376,7 @@ export default function prettyTui(pi: ExtensionAPI) {
   const toolsExpansionPatchKey = Symbol.for("pretty-tui.clean-tool-expansion");
   if (!interactiveModePrototype[toolsExpansionPatchKey]) {
     const originalSetToolsExpanded = interactiveModePrototype.setToolsExpanded;
+    const originalRenderSessionEntries = interactiveModePrototype.renderSessionEntries;
     const patchedSetToolsExpanded = function (this: any, expanded: boolean) {
       cleanToolsExpanded = expanded;
       changingAllToolsExpansion = true;
@@ -386,11 +388,43 @@ export default function prettyTui(pi: ExtensionAPI) {
       }
     };
 
+    const patchedRenderSessionEntries = function (this: any, entries: any[], options?: any) {
+      // buildContextEntries() prepends the latest compaction for model context,
+      // while Pi's live compaction UI appends it chronologically. Keep reloads
+      // and transcript rebuilds consistent with that live presentation.
+      let transcriptEntries = entries;
+      if (Array.isArray(entries) && entries[0]?.type === "compaction") {
+        const [compaction, ...contextEntries] = entries;
+        const parentIndex = contextEntries.findIndex((entry: any) => entry?.id === compaction.parentId);
+        const compactionTime = Date.parse(compaction.timestamp ?? "");
+        const firstNewerIndex = Number.isFinite(compactionTime)
+          ? contextEntries.findIndex((entry: any) => {
+              const entryTime = Date.parse(entry?.timestamp ?? "");
+              return Number.isFinite(entryTime) && entryTime >= compactionTime;
+            })
+          : -1;
+        const insertionIndex = parentIndex >= 0
+          ? parentIndex + 1
+          : firstNewerIndex >= 0
+            ? firstNewerIndex
+            : contextEntries.length;
+        transcriptEntries = [
+          ...contextEntries.slice(0, insertionIndex),
+          compaction,
+          ...contextEntries.slice(insertionIndex),
+        ];
+      }
+      return originalRenderSessionEntries.call(this, transcriptEntries, options);
+    };
+
     interactiveModePrototype[toolsExpansionPatchKey] = {
       originalSetToolsExpanded,
       patchedSetToolsExpanded,
+      originalRenderSessionEntries,
+      patchedRenderSessionEntries,
     };
     interactiveModePrototype.setToolsExpanded = patchedSetToolsExpanded;
+    interactiveModePrototype.renderSessionEntries = patchedRenderSessionEntries;
 
     pi.on("session_shutdown", () => {
       const patch = interactiveModePrototype[toolsExpansionPatchKey];
@@ -398,7 +432,13 @@ export default function prettyTui(pi: ExtensionAPI) {
       if (patch.patchedSetToolsExpanded === interactiveModePrototype.setToolsExpanded) {
         interactiveModePrototype.setToolsExpanded = patch.originalSetToolsExpanded;
       }
-      if (interactiveModePrototype.setToolsExpanded === patch.originalSetToolsExpanded) {
+      if (patch.patchedRenderSessionEntries === interactiveModePrototype.renderSessionEntries) {
+        interactiveModePrototype.renderSessionEntries = patch.originalRenderSessionEntries;
+      }
+      if (
+        interactiveModePrototype.setToolsExpanded === patch.originalSetToolsExpanded &&
+        interactiveModePrototype.renderSessionEntries === patch.originalRenderSessionEntries
+      ) {
         delete interactiveModePrototype[toolsExpansionPatchKey];
       }
     });
@@ -1139,7 +1179,7 @@ export default function prettyTui(pi: ExtensionAPI) {
 
   pi.registerEntryRenderer<ToolSummaryData>("pretty-tui-tool-summary", (entry, { expanded }, theme) => ({
     render(width: number): string[] {
-      if (renderMode !== "clean" || expanded) return [];
+      if (renderMode !== "clean" || expanded || cleanContextCompacted) return [];
       const data = entry.data;
       const groups = data?.groups?.length
         ? data.groups
@@ -1160,8 +1200,8 @@ export default function prettyTui(pi: ExtensionAPI) {
                 : [];
             })();
       // The live tool components own the visual positions. Keep this durable
-      // entry as a fallback only for groups whose tool components are absent
-      // from the current branch (for example, after compaction).
+      // entry as a fallback only for groups whose components are unexpectedly
+      // absent from an uncompacted branch.
       const missingGroups = groups.filter((group) => !knownToolCallIds.has(group.lastToolCallId));
       if (missingGroups.length === 0) return [];
       // Persisted entries represent settled groups. Older versions could
@@ -1245,7 +1285,9 @@ export default function prettyTui(pi: ExtensionAPI) {
 
     // Use the same compaction-aware branch that Pi renders in the transcript;
     // getEntries() can also contain entries from other branches.
-    for (const entry of ctx.sessionManager.buildContextEntries()) {
+    const contextEntries = ctx.sessionManager.buildContextEntries();
+    cleanContextCompacted = contextEntries[0]?.type === "compaction";
+    for (const entry of contextEntries) {
       if (entry.type === "custom" && entry.customType === "pretty-tui-tool-summary") {
         const data = entry.data as ToolSummaryData | undefined;
         if (data?.groups?.length) {
@@ -1308,6 +1350,11 @@ export default function prettyTui(pi: ExtensionAPI) {
 
   pi.on("session_start", (_event, ctx) => restoreCleanSession(ctx));
   pi.on("session_tree", (_event, ctx) => restoreCleanSession(ctx));
+  pi.on("session_compact", () => {
+    // Pre-compaction tools have been summarized intentionally. Their durable
+    // fallback rows should not be replayed beside the compacted transcript.
+    cleanContextCompacted = true;
+  });
 
   const hasVisibleAssistantText = (message: any): boolean =>
     message?.role === "assistant" && messageHasVisibleText(message);
