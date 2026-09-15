@@ -540,51 +540,56 @@ export default function prettyTui(pi: ExtensionAPI) {
 
       const maxWidth = Math.max(1, width);
       const code = String(token.text ?? "");
+      const useRoundedFrame = maxWidth >= 8;
+      const maximumCodeWidth = useRoundedFrame ? maxWidth - 4 : maxWidth;
       const highlighted = this.theme.highlightCode
         ? this.theme.highlightCode(code, token.lang)
         : code.split("\n").map((line: string) => this.theme.codeBlock(line));
       const codeLines: string[] = [];
       for (const line of highlighted.length > 0 ? highlighted : [""]) {
-        const wrapped = wrapTextWithAnsi(line, maxWidth);
+        const wrapped = wrapTextWithAnsi(line, maximumCodeWidth);
         codeLines.push(...(wrapped.length > 0 ? wrapped : [""]));
       }
 
+      if (!useRoundedFrame) {
+        if (nextTokenType && nextTokenType !== "space") codeLines.push("");
+        return codeLines;
+      }
+
       const copyLabel = "[Copy]";
-      const copySuffix = ` ${copyLabel}`;
-      const showCopyButton = fullscreenTui && maxWidth >= 16;
-      const copyReservation = showCopyButton ? visibleWidth(copySuffix) + 3 : 0;
+      const showCopyButton = fullscreenTui && maxWidth >= 18;
+      const topSuffix = showCopyButton ? ` ${copyLabel} ╮` : "╮";
       const rawLanguage = typeof token.lang === "string" ? token.lang.trim() : "";
       const language = rawLanguage.split(/\s+/, 1)[0] || "code";
       const label = truncateToWidth(
         language,
-        Math.max(1, maxWidth - copyReservation - 4),
+        Math.max(1, maxWidth - visibleWidth(topSuffix) - 7),
         "…",
       );
-      const labelText = truncateToWidth(
-        `── ${label} `,
-        Math.max(1, maxWidth - copyReservation),
-        "",
-      );
+      const topPrefix = `╭─ ${label} `;
       const contentWidth = codeLines.reduce(
         (widest, line) => Math.max(widest, visibleWidth(line)),
         0,
       );
-      const minimumRuleWidth = visibleWidth(labelText) + (showCopyButton ? copyReservation : 4);
-      const ruleWidth = Math.min(maxWidth, Math.max(contentWidth, minimumRuleWidth));
+      const minimumFrameWidth = visibleWidth(topPrefix) + 3 + visibleWidth(topSuffix);
+      const frameWidth = Math.min(maxWidth, Math.max(contentWidth + 4, minimumFrameWidth));
       const fillWidth = Math.max(
         0,
-        ruleWidth - visibleWidth(labelText) - (showCopyButton ? visibleWidth(copySuffix) : 0),
+        frameWidth - visibleWidth(topPrefix) - visibleWidth(topSuffix),
       );
-      const buttonStart = visibleWidth(labelText) + fillWidth + (showCopyButton ? 1 : 0);
-      const topRule =
-        labelText +
-        "─".repeat(fillWidth) +
-        (showCopyButton ? copySuffix : "");
+      const buttonStart = visibleWidth(topPrefix) + fillWidth + (showCopyButton ? 1 : 0);
+      const topRule = topPrefix + "─".repeat(fillWidth) + topSuffix;
       const styledTopRule = this.theme.codeBlockBorder(topRule);
+      const framedCodeWidth = Math.max(1, frameWidth - 4);
       const lines = [
         styledTopRule,
-        ...codeLines,
-        this.theme.codeBlockBorder("─".repeat(ruleWidth)),
+        ...codeLines.map((line) =>
+          this.theme.codeBlockBorder("│ ") +
+          line +
+          " ".repeat(Math.max(0, framedCodeWidth - visibleWidth(line))) +
+          this.theme.codeBlockBorder(" │")
+        ),
+        this.theme.codeBlockBorder(`╰${"─".repeat(Math.max(0, frameWidth - 2))}╯`),
       ];
 
       if (showCopyButton && Array.isArray(this[codeBlockCollectionKey])) {

@@ -230,11 +230,22 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
   const plain = lines.map((line) => line.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, ""));
   const headers = plain.map((line, y) => ({ line, y })).filter(({ line }) => line.includes("[Copy]"));
   assert.equal(headers.length, 2);
+  assert.ok(headers.every(({ line }) => line.trimStart().startsWith("╭─")));
+  assert.ok(plain.some((line) => line.includes("│ const a = 1;")));
+  assert.ok(plain.some((line) => line.trimStart().startsWith("╰─")));
   for (const { line, y } of headers) {
     const x = line.indexOf("[Copy]") + 1;
     assert.equal(markdown.handleMouse({ type: "press", button: "left", x, y, width: 42, height: lines.length })?.handled, true);
   }
   assert.ok(lines.every((line) => visibleWidth(line) <= 42));
+  for (const width of [1, 4, 7, 8, 17, 18, 24]) {
+    const narrow = new Markdown("```sh\necho 12345678901234567890\n```", 0, 0, markdownTheme).render(width);
+    assert.ok(narrow.every((line) => visibleWidth(line) <= width));
+    const hasCopy = narrow.some((line) =>
+      line.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").includes("[Copy]"),
+    );
+    assert.equal(hasCopy, width >= 18);
+  }
   markdown.setText("updated");
   const staleX = headers[0].line.indexOf("[Copy]") + 1;
   assert.equal(markdown.handleMouse({ type: "press", button: "left", x: staleX, y: headers[0].y, width: 42, height: lines.length })?.handled, undefined);

@@ -17,7 +17,7 @@ A visual refinement extension for the [Pi coding agent](https://pi.dev/). It pro
 - Colored `+added` and `-removed` edit statistics and diffs
 - Correct hanging indentation for long paths and wrapped tool output
 - Bullet (`•`) markers for unordered Markdown lists
-- Copy-friendly fenced code blocks with language labels, syntax highlighting, and no side-border characters
+- Rounded framed code blocks with language labels and native syntax highlighting
 - Clickable `[Copy]` controls for fenced code blocks in fullscreen TUI mode
 
 ## Install
@@ -61,7 +61,7 @@ In fullscreen TUI mode, fenced Markdown code blocks include a clickable `[Copy]`
 pi --tui-mode fullscreen
 ```
 
-Clicking it copies only the code content through Pi's native clipboard integration and shows a success or error notification. The control is hidden in regular TUI mode because the terminal keeps mouse input for text selection and scrolling there. Code text remains directly selectable, and the decorative rules contain no side-border characters.
+Clicking it copies only the code content—not the rounded border—through Pi's native clipboard integration and shows a success or error notification. The control is hidden in regular TUI mode because the terminal keeps mouse input for text selection and scrolling there.
 
 ## Development
 
