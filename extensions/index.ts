@@ -18,7 +18,9 @@ import {
 import {
   type Component,
   Markdown,
+  stripTerminalSequences,
   truncateToWidth,
+  TuiAltScreen,
   type TuiMouseEvent,
   visibleWidth,
   wrapTextWithAnsi,
@@ -471,6 +473,70 @@ export default function prettyTui(pi: ExtensionAPI) {
         interactiveModePrototype.switchTuiMode === patch.originalSwitchTuiMode
       ) {
         delete interactiveModePrototype[toolsExpansionPatchKey];
+      }
+    });
+  }
+
+  // Fullscreen selection only emits a component click when press and release
+  // land on the exact same cell. Give clean group rows a tiny horizontal
+  // tolerance so an ordinary click does not turn into an accidental selection.
+  const altScreenPrototype = TuiAltScreen.prototype as any;
+  const cleanSummaryClickPatchKey = Symbol.for("pretty-tui.clean-summary-click");
+  const cleanSummaryPressKey = Symbol("pretty-tui.clean-summary-press");
+  if (!altScreenPrototype[cleanSummaryClickPatchKey]) {
+    const originalHandleSelectionMouseEvent = altScreenPrototype.handleSelectionMouseEvent;
+    const summaryAtPoint = (screen: any, x: number, y: number): boolean => {
+      const line = stripTerminalSequences(screen.previousScreen?.[y] ?? "");
+      const match = /●\s+(?:Done|Running)\([^)]*\)/.exec(line);
+      return Boolean(match && x >= match.index && x < match.index + match[0].length);
+    };
+    const patchedHandleSelectionMouseEvent = function (this: any, event: any) {
+      const isMotion = (event.button & 32) !== 0;
+      const isLeftPress = !event.release && !isMotion && (event.button & 3) === 0;
+      if (isLeftPress) {
+        if (summaryAtPoint(this, event.x, event.y)) {
+          this[cleanSummaryPressKey] = { x: event.x, y: event.y };
+        } else {
+          delete this[cleanSummaryPressKey];
+        }
+        return originalHandleSelectionMouseEvent.call(this, event);
+      }
+
+      const press = this[cleanSummaryPressKey];
+      if (press) {
+        const withinClickTolerance =
+          event.y === press.y && Math.abs(event.x - press.x) <= 2;
+        if (isMotion && withinClickTolerance) {
+          return;
+        }
+        if (event.release) {
+          delete this[cleanSummaryPressKey];
+          if (withinClickTolerance) {
+            return originalHandleSelectionMouseEvent.call(this, { ...event, x: press.x });
+          }
+        } else if (isMotion) {
+          delete this[cleanSummaryPressKey];
+        }
+      }
+      return originalHandleSelectionMouseEvent.call(this, event);
+    };
+
+    altScreenPrototype[cleanSummaryClickPatchKey] = {
+      originalHandleSelectionMouseEvent,
+      patchedHandleSelectionMouseEvent,
+    };
+    altScreenPrototype.handleSelectionMouseEvent = patchedHandleSelectionMouseEvent;
+
+    pi.on("session_shutdown", () => {
+      const patch = altScreenPrototype[cleanSummaryClickPatchKey];
+      if (patch?.patchedHandleSelectionMouseEvent === altScreenPrototype.handleSelectionMouseEvent) {
+        altScreenPrototype.handleSelectionMouseEvent = patch.originalHandleSelectionMouseEvent;
+      }
+      if (
+        patch &&
+        altScreenPrototype.handleSelectionMouseEvent === patch.originalHandleSelectionMouseEvent
+      ) {
+        delete altScreenPrototype[cleanSummaryClickPatchKey];
       }
     });
   }

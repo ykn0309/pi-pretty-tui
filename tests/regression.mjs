@@ -6,7 +6,7 @@ import { createJiti } from "jiti";
 import {
   InteractiveMode,
 } from "@earendil-works/pi-coding-agent";
-import { Markdown, visibleWidth } from "@earendil-works/pi-tui";
+import { Markdown, TuiAltScreen, visibleWidth } from "@earendil-works/pi-tui";
 
 const agentDir = mkdtempSync(join(tmpdir(), "pi-pretty-tui-test-"));
 process.env.PI_CODING_AGENT_DIR = agentDir;
@@ -276,7 +276,43 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
   assert.ok(regular.every((line) => !line.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").includes("[Copy]")));
 }
 
+// Clean summary rows tolerate a two-cell horizontal wobble while ordinary
+// fullscreen text selection keeps Pi's exact drag behavior.
+{
+  const clicks = [];
+  const screen = {
+    previousScreen: ["● Done(2 tool calls)"],
+    terminal: { rows: 1, columns: 80 },
+    currentLayout: undefined,
+    copyOnSelect: false,
+    hasOverlay: () => false,
+    stopSelectionAutoScroll() {},
+    getSelectionPoint: (event) => ({ row: event.y, col: event.x, scrollView: undefined }),
+    getWordSelection: () => undefined,
+    getClickCount: () => 1,
+    createMouseEvent: (_type, _button, x, y) => ({ type: "click", button: "left", x, y }),
+    dispatchMouseToOverlay: () => ({ hit: false, result: undefined }),
+    dispatchMouseToLayout: (event) => {
+      clicks.push(event);
+      return { handled: true };
+    },
+    applyMouseDispatchResult: () => false,
+    clearTextSelection() {},
+    requestRender() {},
+    updateSelectionFocus(point) { this.selectionFocus = point; },
+    updateSelectionAutoScroll() {},
+  };
+  const handleSelection = TuiAltScreen.prototype.handleSelectionMouseEvent;
+  handleSelection.call(screen, { button: 0, release: false, x: 5, y: 0 });
+  handleSelection.call(screen, { button: 32, release: false, x: 7, y: 0 });
+  handleSelection.call(screen, { button: 3, release: true, x: 7, y: 0 });
+  assert.equal(clicks.length, 1);
+  assert.equal(clicks[0].x, 5);
+}
+
+const patchedSelectionHandler = TuiAltScreen.prototype.handleSelectionMouseEvent;
 await emit("session_shutdown");
 assert.equal(Markdown.prototype.handleMouse, undefined);
+assert.notEqual(TuiAltScreen.prototype.handleSelectionMouseEvent, patchedSelectionHandler);
 rmSync(agentDir, { recursive: true, force: true });
 console.log("Regression suite passed.");
