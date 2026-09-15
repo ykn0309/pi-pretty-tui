@@ -377,6 +377,29 @@ export default function prettyTui(pi: ExtensionAPI) {
   // Extension shortcuts cannot replace Pi's built-in Ctrl+O binding. Wrap
   // the exported state transition instead, so both Ctrl+O and UI callers keep
   // their normal behavior while clean thinking follows the same state.
+  const orderContextEntriesForTranscript = (entries: any[]): any[] => {
+    if (!Array.isArray(entries) || entries[0]?.type !== "compaction") return entries;
+    const [compaction, ...contextEntries] = entries;
+    const parentIndex = contextEntries.findIndex((entry: any) => entry?.id === compaction.parentId);
+    const compactionTime = Date.parse(compaction.timestamp ?? "");
+    const firstNewerIndex = Number.isFinite(compactionTime)
+      ? contextEntries.findIndex((entry: any) => {
+          const entryTime = Date.parse(entry?.timestamp ?? "");
+          return Number.isFinite(entryTime) && entryTime >= compactionTime;
+        })
+      : -1;
+    const insertionIndex = parentIndex >= 0
+      ? parentIndex + 1
+      : firstNewerIndex >= 0
+        ? firstNewerIndex
+        : contextEntries.length;
+    return [
+      ...contextEntries.slice(0, insertionIndex),
+      compaction,
+      ...contextEntries.slice(insertionIndex),
+    ];
+  };
+
   const interactiveModePrototype = InteractiveMode.prototype as any;
   const toolsExpansionPatchKey = Symbol.for("pretty-tui.clean-tool-expansion");
   if (!interactiveModePrototype[toolsExpansionPatchKey]) {
@@ -399,29 +422,11 @@ export default function prettyTui(pi: ExtensionAPI) {
       // buildContextEntries() prepends the latest compaction for model context,
       // while Pi's live compaction UI appends it chronologically. Keep reloads
       // and transcript rebuilds consistent with that live presentation.
-      let transcriptEntries = entries;
-      if (Array.isArray(entries) && entries[0]?.type === "compaction") {
-        const [compaction, ...contextEntries] = entries;
-        const parentIndex = contextEntries.findIndex((entry: any) => entry?.id === compaction.parentId);
-        const compactionTime = Date.parse(compaction.timestamp ?? "");
-        const firstNewerIndex = Number.isFinite(compactionTime)
-          ? contextEntries.findIndex((entry: any) => {
-              const entryTime = Date.parse(entry?.timestamp ?? "");
-              return Number.isFinite(entryTime) && entryTime >= compactionTime;
-            })
-          : -1;
-        const insertionIndex = parentIndex >= 0
-          ? parentIndex + 1
-          : firstNewerIndex >= 0
-            ? firstNewerIndex
-            : contextEntries.length;
-        transcriptEntries = [
-          ...contextEntries.slice(0, insertionIndex),
-          compaction,
-          ...contextEntries.slice(insertionIndex),
-        ];
-      }
-      return originalRenderSessionEntries.call(this, transcriptEntries, options);
+      return originalRenderSessionEntries.call(
+        this,
+        orderContextEntriesForTranscript(entries),
+        options,
+      );
     };
 
     const patchedSwitchTuiMode = function (this: any, ...args: any[]) {
@@ -1487,6 +1492,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     let lastFinishedGroup: ToolSummaryGroup | undefined;
     const inferredGroups: ToolSummaryGroup[] = [];
     const toolCalls = new Set<string>();
+    const completedToolCalls = new Set<string>();
     const explicitSummaryIds = new Set<string>();
 
     const rememberGroup = (group: ToolSummaryGroup, entryId?: string) => {
@@ -1515,23 +1521,46 @@ export default function prettyTui(pi: ExtensionAPI) {
       failed = 0;
       lastToolCallId = undefined;
       toolCalls.clear();
+      completedToolCalls.clear();
+    };
+
+    const inferredGroupsOverlapping = (group: ToolSummaryGroup): ToolSummaryGroup[] => {
+      if (!group.toolCallIds?.length) return [];
+      const persistedIds = new Set(group.toolCallIds);
+      const currentGroup = lastToolCallId && count > 0
+        ? [{ count, failed, lastToolCallId, toolCallIds: [...toolCalls] }]
+        : [];
+      return [...inferredGroups, ...currentGroup].filter((inferred) =>
+        inferred.toolCallIds?.some((toolCallId) => persistedIds.has(toolCallId)),
+      );
     };
 
     const splitSummaryAtTranscriptBoundaries = (group: ToolSummaryGroup): ToolSummaryGroup[] => {
       if (!group.toolCallIds?.length) return [group];
       const persistedIds = new Set(group.toolCallIds);
-      const overlappingGroups = inferredGroups.filter((inferred) =>
-        inferred.toolCallIds?.some((toolCallId) => persistedIds.has(toolCallId)),
-      );
+      const overlappingGroups = inferredGroupsOverlapping(group);
       if (overlappingGroups.length <= 1) return [group];
 
-      // Older clean-mode summaries could span a user steering message because
+      // Older clean-mode summaries could span steering or compaction because
       // only visible assistant text ended a live group. Prefer the transcript's
-      // user/text boundaries so parent rows and expanded children stay chronological.
+      // hard boundaries so parent rows and expanded children stay chronological.
       return overlappingGroups.map((inferred) => ({
         ...inferred,
         toolCallIds: inferred.toolCallIds?.filter((toolCallId) => persistedIds.has(toolCallId)),
       }));
+    };
+
+    const replaceInferredGroupsWithSummary = (
+      persistedGroup: ToolSummaryGroup,
+      restoredGroups: ToolSummaryGroup[],
+    ) => {
+      const restoredOwners = new Set(restoredGroups.map((group) => group.lastToolCallId));
+      for (const inferred of inferredGroupsOverlapping(persistedGroup)) {
+        if (!restoredOwners.has(inferred.lastToolCallId)) {
+          settledSummaries.delete(inferred.lastToolCallId);
+        }
+      }
+      for (const group of restoredGroups) rememberGroup(group);
     };
 
     const consumeGroupCoveredBySummary = (groups: ToolSummaryGroup[]) => {
@@ -1549,21 +1578,29 @@ export default function prettyTui(pi: ExtensionAPI) {
       lastToolCallId = undefined;
       lastFinishedGroup = undefined;
       toolCalls.clear();
+      completedToolCalls.clear();
     };
 
     // Use the same compaction-aware branch that Pi renders in the transcript;
     // getEntries() can also contain entries from other branches.
-    const contextEntries = ctx.sessionManager.buildContextEntries();
-    cleanContextCompacted = contextEntries[0]?.type === "compaction";
+    const modelContextEntries = ctx.sessionManager.buildContextEntries();
+    cleanContextCompacted = modelContextEntries[0]?.type === "compaction";
+    const contextEntries = orderContextEntriesForTranscript(modelContextEntries);
     for (const entry of contextEntries) {
+      if (entry.type === "compaction") {
+        finishGroup();
+        lastFinishedGroup = undefined;
+        continue;
+      }
       if (entry.type === "custom" && entry.customType === "pretty-tui-tool-summary") {
         const data = entry.data as ToolSummaryData | undefined;
         if (data?.groups?.length) {
           const validGroups = data.groups.filter(
             (group): group is ToolSummaryGroup => Boolean(group?.lastToolCallId && group.count > 0),
           );
-          for (const group of validGroups.flatMap(splitSummaryAtTranscriptBoundaries)) {
-            rememberGroup(group);
+          for (const group of validGroups) {
+            const restoredGroups = splitSummaryAtTranscriptBoundaries(group);
+            replaceInferredGroupsWithSummary(group, restoredGroups);
           }
           consumeGroupCoveredBySummary(validGroups);
         } else if (data?.lastToolCallId) {
@@ -1607,15 +1644,20 @@ export default function prettyTui(pi: ExtensionAPI) {
         if (messageHasVisibleText(message)) finishGroup();
         for (const item of messageContentItems(message)) {
           if (item.type !== "toolCall" || !supportedTools.has(item.name)) continue;
-          count++;
-          lastToolCallId = item.id;
           toolCalls.add(item.id);
         }
         continue;
       }
 
-      if (message.role === "toolResult" && toolCalls.has(message.toolCallId) && message.isError) {
-        failed++;
+      if (
+        message.role === "toolResult" &&
+        toolCalls.has(message.toolCallId) &&
+        !completedToolCalls.has(message.toolCallId)
+      ) {
+        completedToolCalls.add(message.toolCallId);
+        count++;
+        lastToolCallId = message.toolCallId;
+        if (message.isError) failed++;
       }
     }
 
@@ -1625,6 +1667,10 @@ export default function prettyTui(pi: ExtensionAPI) {
   pi.on("session_start", (_event, ctx) => restoreCleanSession(ctx));
   pi.on("session_tree", (_event, ctx) => restoreCleanSession(ctx));
   pi.on("session_compact", () => {
+    // Compaction is a hard chronological boundary. Keep tools completed before
+    // it in their own group so expanded hierarchy lines never cross the summary.
+    finishCleanGroup("done");
+    settleLastCleanGroup();
     // Pre-compaction tools have been summarized intentionally. Their durable
     // fallback rows should not be replayed beside the compacted transcript.
     cleanContextCompacted = true;
