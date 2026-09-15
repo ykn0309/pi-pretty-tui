@@ -17,6 +17,7 @@ import {
 import {
   type Component,
   Markdown,
+  truncateToWidth,
   visibleWidth,
   wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
@@ -444,9 +445,68 @@ export default function prettyTui(pi: ExtensionAPI) {
     });
   }
 
-  // Pi normalizes unordered-list markers to "-". Replace only that marker;
-  // leave code-block rendering entirely to Pi's built-in Markdown renderer.
+  // Refine Pi's Markdown presentation while preserving its parser and themes.
   const markdownPrototype = Markdown.prototype as any;
+  const codeBlockPatchKey = Symbol.for("pretty-tui.code-blocks");
+  if (!markdownPrototype[codeBlockPatchKey]) {
+    const originalRenderToken = markdownPrototype.renderToken;
+    const patchedRenderToken = function (
+      this: any,
+      token: any,
+      width: number,
+      nextTokenType?: string,
+      styleContext?: any,
+    ): string[] {
+      if (token?.type !== "code") {
+        return originalRenderToken.call(this, token, width, nextTokenType, styleContext);
+      }
+
+      const maxWidth = Math.max(1, width);
+      const highlighted = this.theme.highlightCode
+        ? this.theme.highlightCode(String(token.text ?? ""), token.lang)
+        : String(token.text ?? "").split("\n").map((line: string) => this.theme.codeBlock(line));
+      const codeLines: string[] = [];
+      for (const line of highlighted.length > 0 ? highlighted : [""]) {
+        const wrapped = wrapTextWithAnsi(line, maxWidth);
+        codeLines.push(...(wrapped.length > 0 ? wrapped : [""]));
+      }
+
+      const rawLanguage = typeof token.lang === "string" ? token.lang.trim() : "";
+      const language = rawLanguage.split(/\s+/, 1)[0] || "code";
+      const label = truncateToWidth(language, Math.max(1, maxWidth - 4), "…");
+      const labelText = truncateToWidth(`── ${label} `, maxWidth, "");
+      const contentWidth = codeLines.reduce(
+        (widest, line) => Math.max(widest, visibleWidth(line)),
+        0,
+      );
+      const ruleWidth = Math.min(
+        maxWidth,
+        Math.max(contentWidth, Math.min(maxWidth, visibleWidth(labelText) + 4)),
+      );
+      const topRule = labelText + "─".repeat(Math.max(0, ruleWidth - visibleWidth(labelText)));
+      const lines = [
+        this.theme.codeBlockBorder(topRule),
+        ...codeLines,
+        this.theme.codeBlockBorder("─".repeat(ruleWidth)),
+      ];
+      if (nextTokenType && nextTokenType !== "space") lines.push("");
+      return lines;
+    };
+
+    markdownPrototype[codeBlockPatchKey] = { originalRenderToken, patchedRenderToken };
+    markdownPrototype.renderToken = patchedRenderToken;
+
+    pi.on("session_shutdown", () => {
+      const patch = markdownPrototype[codeBlockPatchKey];
+      if (patch?.patchedRenderToken === markdownPrototype.renderToken) {
+        markdownPrototype.renderToken = patch.originalRenderToken;
+      }
+      if (patch && markdownPrototype.renderToken === patch.originalRenderToken) {
+        delete markdownPrototype[codeBlockPatchKey];
+      }
+    });
+  }
+
   const listPatchKey = Symbol.for("pretty-tui.list-bullets");
   if (!markdownPrototype[listPatchKey]) {
     const originalRenderList = markdownPrototype.renderList;
