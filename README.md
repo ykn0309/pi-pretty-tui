@@ -8,19 +8,12 @@ A beautiful, polished TUI for the [Pi coding agent](https://pi.dev/).
 
 ## Features
 
-- Rounded, titled `User` message frames with theme-aware borders, filled backgrounds, and Markdown support
-- A rounded prompt editor that preserves native cursor, IME, autocomplete, and mouse behavior
-- Compact `Read`, `Bash`, `Edit`, `Write`, `Grep`, `Find`, and `List` calls
-- Concise per-tool call and result summaries with expandable details
-- Native-style `Write` previews in `full` mode: first 10 lines when collapsed, full content when expanded
-- Live `Bash` output in `full` mode: latest 5 lines when collapsed, all available output when expanded
-- Switchable `full`, `compact`, and `clean` rendering modes with persistent settings
-- Clean mode hides thinking blocks (including Pi's standalone `Thinking...` placeholder) while collapsed and reveals the original thinking content when expanded
-- Colored `+added` and `-removed` edit statistics and diffs
-- Correct hanging indentation for long paths and wrapped tool output
-- Bullet (`•`) markers for unordered Markdown lists
-- Rounded framed code blocks with language labels and native syntax highlighting
-- Clickable `[Copy]` controls for fenced code blocks in fullscreen TUI mode
+- **Collapsible tool activity:** instead of filling the conversation with individual tool calls, supported tools are collected into a single `Running(...)` row while work is in progress and a quiet `Done(...)` row when it finishes. Click the group to reveal its compact child calls, click any child for full details, and click the parent again to collapse everything.
+- **Clear conversation structure:** assistant text, steering messages, and compaction summaries create natural group boundaries, so tool activity stays in the correct transcript position even across long or interrupted tasks. Thinking details remain out of the way until you choose to expand them.
+- **Useful details on demand:** tool-aware summaries keep paths, commands, results, diffs, file previews, and live shell output concise without removing access to the original content.
+- **A cohesive visual finish:** rounded user messages and prompt input, theme-aware colors, cleaner Markdown lists, and rounded syntax-highlighted code blocks make the entire TUI feel intentional. In fullscreen, each fenced code block also includes a native-feeling `[Copy]` control.
+
+Collapsible grouping covers Pi's built-in `read`, `bash`, `edit`, `write`, `grep`, `find`, and `ls` tools. Third-party tools keep their own rendering, and Pi's cursor, IME, autocomplete, mouse interaction, and tool execution behavior remain intact.
 
 ## Install
 
@@ -32,28 +25,13 @@ Restart Pi or run `/reload` after installation.
 
 Pi may warn that built-in tools are being overridden. This is expected: pi-pretty-tui re-registers Pi's built-in tools and delegates execution to their original implementations, changing only their TUI renderers.
 
+## Working with tool calls
+
+Click a `Running(...)` or `Done(...)` row to keep it as a parent and reveal the tools beneath it. Click an individual child to toggle its complete view, or click the parent again to collapse the whole group. Press `Ctrl+O` at any time to use Pi's global expansion control for tool output and thinking content.
+
 ## Rendering modes
 
-Run `/pretty-tui` to choose a mode interactively, or set one directly:
-
-```text
-/pretty-tui full
-/pretty-tui compact
-/pretty-tui clean
-/pretty-tui status
-```
-
-- `full`: preserve each tool's detailed call renderer and normal result preview. Press `Ctrl+O` to expand available output, diffs, and content.
-- `compact`: when collapsed, all supported built-in tools use concise one-line call summaries and final result summaries. Long commands, written content, edit diffs, and tool output stay hidden until expanded; press `Ctrl+O` to reveal the full details.
-- `clean` (default): collapse supported tool calls into a single `Running(...)` status; the activity slot shows a tool name as soon as its streamed tool call appears, such as `Running(3 tool calls · Read)`, and remains visible for at least 1 second before changing to `thinking...`. Once settled, the label becomes `Done(...)`. Click a group status to reveal all tools in that group as indented compact children while retaining the parent `Running`/`Done` row, then click an individual tool to toggle its full details. Delivered steering messages, compaction summaries, and visible assistant text start new tool groups, so later calls remain in transcript order. Collapsed thinking blocks stay hidden without Pi's `Thinking...` placeholder; press `Ctrl+O` to reveal thinking content and all expanded tool calls/output in transcript order.
-
-Clean mode covers the built-in tools managed by this package: `read`, `bash`, `edit`, `write`, `grep`, `find`, and `ls`. Third-party tools keep their own rendering.
-
-The selected mode applies immediately and persists in `~/.pi/agent/pretty-tui.json` (or the directory selected by `PI_CODING_AGENT_DIR`).
-
-## Expand tool output
-
-Press `Ctrl+O` (Pi's default `app.tools.expand` keybinding) to show or hide detailed output, edit diffs, complete `Write` content, full tool details, and thinking content in `compact` or `clean` mode. In clean mode, mouse interaction also supports progressive disclosure: click a group status to retain it as a parent and reveal compact child tools, click one child for its full view, or click the parent again to collapse the group.
+The extension supports three persistent rendering modes: `clean` (default), `compact`, and `full`. Run `/pretty-tui` to choose one interactively, or use `/pretty-tui clean`, `/pretty-tui compact`, `/pretty-tui full`, and `/pretty-tui status` directly. The selection is stored in `~/.pi/agent/pretty-tui.json` or under the directory selected by `PI_CODING_AGENT_DIR`.
 
 ## Copy code blocks
 
@@ -78,7 +56,7 @@ The suite covers live and restored steering/compaction boundaries, parallel comp
 
 ## Compatibility notice
 
-Tool rendering uses Pi's documented extension APIs. Clean thinking and active-tool state follow Pi's built-in expansion and execution transitions through its exported interactive components. Framing native user messages, rounding the native prompt editor, changing unordered-list markers, and enhancing fenced code blocks require reload-safe runtime patches because Pi does not currently expose public renderer hooks for those presentation details. Markdown parsing, syntax highlighting, and terminal semantic zones remain handled by Pi.
+Tool rendering uses Pi's documented extension APIs. Thinking visibility and active-tool state follow Pi's built-in expansion and execution transitions through its exported interactive components. Framing native user messages, rounding the native prompt editor, changing unordered-list markers, and enhancing fenced code blocks require reload-safe runtime patches because Pi does not currently expose public renderer hooks for those presentation details. Markdown parsing, syntax highlighting, and terminal semantic zones remain handled by Pi.
 
 No Pi source files are modified. Runtime patches are removed during session shutdown, but a future Pi release may require this extension to be updated.
 
