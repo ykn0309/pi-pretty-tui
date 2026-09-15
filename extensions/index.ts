@@ -11,6 +11,7 @@ import {
   createLsTool,
   createReadTool,
   createWriteTool,
+  copyToClipboard,
   getAgentDir,
   type ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
@@ -18,6 +19,7 @@ import {
   type Component,
   Markdown,
   truncateToWidth,
+  type TuiMouseEvent,
   visibleWidth,
   wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
@@ -54,6 +56,8 @@ export default function prettyTui(pi: ExtensionAPI) {
     : "clean";
   let cleanToolsExpanded = false;
   let cleanContextCompacted = false;
+  let fullscreenTui = false;
+  let currentExtensionUi: any;
   let changingAllToolsExpansion = false;
   const cleanCompactToolCallIds = new Set<string>();
   const cleanGroupToolCallIds = new Map<string, string[]>();
@@ -378,6 +382,7 @@ export default function prettyTui(pi: ExtensionAPI) {
   if (!interactiveModePrototype[toolsExpansionPatchKey]) {
     const originalSetToolsExpanded = interactiveModePrototype.setToolsExpanded;
     const originalRenderSessionEntries = interactiveModePrototype.renderSessionEntries;
+    const originalSwitchTuiMode = interactiveModePrototype.switchTuiMode;
     const patchedSetToolsExpanded = function (this: any, expanded: boolean) {
       cleanToolsExpanded = expanded;
       changingAllToolsExpansion = true;
@@ -390,6 +395,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     };
 
     const patchedRenderSessionEntries = function (this: any, entries: any[], options?: any) {
+      fullscreenTui = this.ui?.mode === "fullscreen";
       // buildContextEntries() prepends the latest compaction for model context,
       // while Pi's live compaction UI appends it chronologically. Keep reloads
       // and transcript rebuilds consistent with that live presentation.
@@ -418,16 +424,27 @@ export default function prettyTui(pi: ExtensionAPI) {
       return originalRenderSessionEntries.call(this, transcriptEntries, options);
     };
 
+    const patchedSwitchTuiMode = function (this: any, ...args: any[]) {
+      const result = originalSwitchTuiMode.apply(this, args);
+      fullscreenTui = this.ui?.mode === "fullscreen";
+      return result;
+    };
+
     interactiveModePrototype[toolsExpansionPatchKey] = {
       originalSetToolsExpanded,
       patchedSetToolsExpanded,
       originalRenderSessionEntries,
       patchedRenderSessionEntries,
+      originalSwitchTuiMode,
+      patchedSwitchTuiMode,
     };
     interactiveModePrototype.setToolsExpanded = patchedSetToolsExpanded;
     interactiveModePrototype.renderSessionEntries = patchedRenderSessionEntries;
+    interactiveModePrototype.switchTuiMode = patchedSwitchTuiMode;
 
     pi.on("session_shutdown", () => {
+      fullscreenTui = false;
+      currentExtensionUi = undefined;
       const patch = interactiveModePrototype[toolsExpansionPatchKey];
       if (!patch) return;
       if (patch.patchedSetToolsExpanded === interactiveModePrototype.setToolsExpanded) {
@@ -436,9 +453,13 @@ export default function prettyTui(pi: ExtensionAPI) {
       if (patch.patchedRenderSessionEntries === interactiveModePrototype.renderSessionEntries) {
         interactiveModePrototype.renderSessionEntries = patch.originalRenderSessionEntries;
       }
+      if (patch.patchedSwitchTuiMode === interactiveModePrototype.switchTuiMode) {
+        interactiveModePrototype.switchTuiMode = patch.originalSwitchTuiMode;
+      }
       if (
         interactiveModePrototype.setToolsExpanded === patch.originalSetToolsExpanded &&
-        interactiveModePrototype.renderSessionEntries === patch.originalRenderSessionEntries
+        interactiveModePrototype.renderSessionEntries === patch.originalRenderSessionEntries &&
+        interactiveModePrototype.switchTuiMode === patch.originalSwitchTuiMode
       ) {
         delete interactiveModePrototype[toolsExpansionPatchKey];
       }
@@ -448,8 +469,59 @@ export default function prettyTui(pi: ExtensionAPI) {
   // Refine Pi's Markdown presentation while preserving its parser and themes.
   const markdownPrototype = Markdown.prototype as any;
   const codeBlockPatchKey = Symbol.for("pretty-tui.code-blocks");
+  const codeBlockCollectionKey = Symbol("pretty-tui.code-block-collection");
+  const codeBlockRegionsKey = Symbol("pretty-tui.code-block-regions");
   if (!markdownPrototype[codeBlockPatchKey]) {
+    const originalInvalidate = markdownPrototype.invalidate;
+    const originalRender = markdownPrototype.render;
     const originalRenderToken = markdownPrototype.renderToken;
+    const originalHandleMouse = markdownPrototype.handleMouse;
+    const stripTerminalStyles = (value: string): string =>
+      value.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
+
+    const patchedInvalidate = function (this: any) {
+      delete this[codeBlockCollectionKey];
+      delete this[codeBlockRegionsKey];
+      return originalInvalidate.call(this);
+    };
+
+    const patchedRender = function (this: any, width: number): string[] {
+      const needsRender =
+        !this.cachedLines || this.cachedText !== this.text || this.cachedWidth !== width;
+      if (needsRender) this[codeBlockCollectionKey] = [];
+
+      const lines = originalRender.call(this, width);
+      if (!needsRender) return lines;
+
+      const regions: Array<{ xStart: number; xEnd: number; y: number; code: string }> = [];
+      let searchFrom = 0;
+      for (const block of this[codeBlockCollectionKey] ?? []) {
+        let headerLine = -1;
+        for (let lineIndex = searchFrom; lineIndex < lines.length; lineIndex += 1) {
+          const renderedLine = lines[lineIndex] ?? "";
+          if (
+            renderedLine.includes(block.styledTopRule) ||
+            stripTerminalStyles(renderedLine).includes(block.topRule)
+          ) {
+            headerLine = lineIndex;
+            break;
+          }
+        }
+        if (headerLine < 0) continue;
+
+        regions.push({
+          xStart: Number(this.paddingX ?? 0) + block.buttonStart,
+          xEnd: Number(this.paddingX ?? 0) + block.buttonStart + block.buttonWidth,
+          y: headerLine,
+          code: block.code,
+        });
+        searchFrom = headerLine + 1;
+      }
+      this[codeBlockRegionsKey] = regions;
+      delete this[codeBlockCollectionKey];
+      return lines;
+    };
+
     const patchedRenderToken = function (
       this: any,
       token: any,
@@ -462,46 +534,133 @@ export default function prettyTui(pi: ExtensionAPI) {
       }
 
       const maxWidth = Math.max(1, width);
+      const code = String(token.text ?? "");
       const highlighted = this.theme.highlightCode
-        ? this.theme.highlightCode(String(token.text ?? ""), token.lang)
-        : String(token.text ?? "").split("\n").map((line: string) => this.theme.codeBlock(line));
+        ? this.theme.highlightCode(code, token.lang)
+        : code.split("\n").map((line: string) => this.theme.codeBlock(line));
       const codeLines: string[] = [];
       for (const line of highlighted.length > 0 ? highlighted : [""]) {
         const wrapped = wrapTextWithAnsi(line, maxWidth);
         codeLines.push(...(wrapped.length > 0 ? wrapped : [""]));
       }
 
+      const copyLabel = "[Copy]";
+      const copySuffix = ` ${copyLabel}`;
+      const showCopyButton = fullscreenTui && maxWidth >= 16;
+      const copyReservation = showCopyButton ? visibleWidth(copySuffix) + 3 : 0;
       const rawLanguage = typeof token.lang === "string" ? token.lang.trim() : "";
       const language = rawLanguage.split(/\s+/, 1)[0] || "code";
-      const label = truncateToWidth(language, Math.max(1, maxWidth - 4), "…");
-      const labelText = truncateToWidth(`── ${label} `, maxWidth, "");
+      const label = truncateToWidth(
+        language,
+        Math.max(1, maxWidth - copyReservation - 4),
+        "…",
+      );
+      const labelText = truncateToWidth(
+        `── ${label} `,
+        Math.max(1, maxWidth - copyReservation),
+        "",
+      );
       const contentWidth = codeLines.reduce(
         (widest, line) => Math.max(widest, visibleWidth(line)),
         0,
       );
-      const ruleWidth = Math.min(
-        maxWidth,
-        Math.max(contentWidth, Math.min(maxWidth, visibleWidth(labelText) + 4)),
+      const minimumRuleWidth = visibleWidth(labelText) + (showCopyButton ? copyReservation : 4);
+      const ruleWidth = Math.min(maxWidth, Math.max(contentWidth, minimumRuleWidth));
+      const fillWidth = Math.max(
+        0,
+        ruleWidth - visibleWidth(labelText) - (showCopyButton ? visibleWidth(copySuffix) : 0),
       );
-      const topRule = labelText + "─".repeat(Math.max(0, ruleWidth - visibleWidth(labelText)));
+      const buttonStart = visibleWidth(labelText) + fillWidth + (showCopyButton ? 1 : 0);
+      const topRule =
+        labelText +
+        "─".repeat(fillWidth) +
+        (showCopyButton ? copySuffix : "");
+      const styledTopRule = this.theme.codeBlockBorder(topRule);
       const lines = [
-        this.theme.codeBlockBorder(topRule),
+        styledTopRule,
         ...codeLines,
         this.theme.codeBlockBorder("─".repeat(ruleWidth)),
       ];
+
+      if (showCopyButton && Array.isArray(this[codeBlockCollectionKey])) {
+        this[codeBlockCollectionKey].push({
+          buttonStart,
+          buttonWidth: visibleWidth(copyLabel),
+          code,
+          styledTopRule,
+          topRule,
+        });
+      }
       if (nextTokenType && nextTokenType !== "space") lines.push("");
       return lines;
     };
 
-    markdownPrototype[codeBlockPatchKey] = { originalRenderToken, patchedRenderToken };
+    const patchedHandleMouse = function (this: any, event: TuiMouseEvent) {
+      if (event.button === "left" && (event.type === "press" || event.type === "click")) {
+        const region = (this[codeBlockRegionsKey] ?? []).find(
+          (candidate: any) =>
+            event.y === candidate.y && event.x >= candidate.xStart && event.x < candidate.xEnd,
+        );
+        if (region) {
+          if (event.type === "click") {
+            void copyToClipboard(region.code)
+              .then(() => {
+                const lineCount = region.code === "" ? 0 : region.code.split("\n").length;
+                currentExtensionUi?.notify(
+                  `Copied ${lineCount} line${lineCount === 1 ? "" : "s"} of code`,
+                  "info",
+                );
+              })
+              .catch((error: unknown) => {
+                currentExtensionUi?.notify(
+                  `Copy failed: ${error instanceof Error ? error.message : String(error)}`,
+                  "error",
+                );
+              });
+          }
+          return { handled: true, render: false };
+        }
+      }
+      return originalHandleMouse?.call(this, event);
+    };
+
+    markdownPrototype[codeBlockPatchKey] = {
+      originalHandleMouse,
+      originalInvalidate,
+      originalRender,
+      originalRenderToken,
+      patchedHandleMouse,
+      patchedInvalidate,
+      patchedRender,
+      patchedRenderToken,
+    };
+    markdownPrototype.invalidate = patchedInvalidate;
+    markdownPrototype.render = patchedRender;
     markdownPrototype.renderToken = patchedRenderToken;
+    markdownPrototype.handleMouse = patchedHandleMouse;
 
     pi.on("session_shutdown", () => {
       const patch = markdownPrototype[codeBlockPatchKey];
+      if (patch?.patchedInvalidate === markdownPrototype.invalidate) {
+        markdownPrototype.invalidate = patch.originalInvalidate;
+      }
+      if (patch?.patchedRender === markdownPrototype.render) {
+        markdownPrototype.render = patch.originalRender;
+      }
       if (patch?.patchedRenderToken === markdownPrototype.renderToken) {
         markdownPrototype.renderToken = patch.originalRenderToken;
       }
-      if (patch && markdownPrototype.renderToken === patch.originalRenderToken) {
+      if (patch?.patchedHandleMouse === markdownPrototype.handleMouse) {
+        if (patch.originalHandleMouse) markdownPrototype.handleMouse = patch.originalHandleMouse;
+        else delete markdownPrototype.handleMouse;
+      }
+      if (
+        patch &&
+        markdownPrototype.invalidate === patch.originalInvalidate &&
+        markdownPrototype.render === patch.originalRender &&
+        markdownPrototype.renderToken === patch.originalRenderToken &&
+        markdownPrototype.handleMouse === patch.originalHandleMouse
+      ) {
         delete markdownPrototype[codeBlockPatchKey];
       }
     });
@@ -1297,6 +1456,7 @@ export default function prettyTui(pi: ExtensionAPI) {
         );
 
   const restoreCleanSession = (ctx: any) => {
+    currentExtensionUi = ctx.ui;
     cleanToolsExpanded = ctx.ui.getToolsExpanded();
     settledSummaries.clear();
     legacySummaryLastToolCallIds.clear();
@@ -1355,6 +1515,23 @@ export default function prettyTui(pi: ExtensionAPI) {
       toolCalls.clear();
     };
 
+    const consumeGroupCoveredBySummary = (groups: ToolSummaryGroup[]) => {
+      if (toolCalls.size === 0) return;
+      const coveredToolCallIds = new Set(
+        groups.flatMap((group) => [group.lastToolCallId, ...(group.toolCallIds ?? [])]),
+      );
+      if (![...toolCalls].some((toolCallId) => coveredToolCallIds.has(toolCallId))) return;
+
+      // A durable summary closes the current run even if the session contains
+      // an orphaned tool call without a toolResult. Do not infer a second,
+      // larger Done row when the following user message closes the transcript group.
+      count = 0;
+      failed = 0;
+      lastToolCallId = undefined;
+      lastFinishedGroup = undefined;
+      toolCalls.clear();
+    };
+
     // Use the same compaction-aware branch that Pi renders in the transcript;
     // getEntries() can also contain entries from other branches.
     const contextEntries = ctx.sessionManager.buildContextEntries();
@@ -1363,15 +1540,19 @@ export default function prettyTui(pi: ExtensionAPI) {
       if (entry.type === "custom" && entry.customType === "pretty-tui-tool-summary") {
         const data = entry.data as ToolSummaryData | undefined;
         if (data?.groups?.length) {
-          for (const group of data.groups) {
-            if (group?.lastToolCallId && group.count > 0) rememberGroup(group);
-          }
+          const validGroups = data.groups.filter(
+            (group): group is ToolSummaryGroup => Boolean(group?.lastToolCallId && group.count > 0),
+          );
+          for (const group of validGroups) rememberGroup(group);
+          consumeGroupCoveredBySummary(validGroups);
         } else if (data?.lastToolCallId) {
-          rememberGroup({
+          const group = {
             count: data.count ?? 0,
             failed: data.failed ?? 0,
             lastToolCallId: data.lastToolCallId,
-          });
+          };
+          rememberGroup(group);
+          consumeGroupCoveredBySummary([group]);
         } else if (lastFinishedGroup) {
           // Migrate summaries written by the earlier clean-mode versions,
           // which did not persist the final tool call id. The text message

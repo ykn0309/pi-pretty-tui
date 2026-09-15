@@ -17,6 +17,8 @@ A visual refinement extension for the [Pi coding agent](https://pi.dev/). It pro
 - Colored `+added` and `-removed` edit statistics and diffs
 - Correct hanging indentation for long paths and wrapped tool output
 - Bullet (`•`) markers for unordered Markdown lists
+- Copy-friendly fenced code blocks with language labels, syntax highlighting, and no side-border characters
+- Clickable `[Copy]` controls for fenced code blocks in fullscreen TUI mode
 
 ## Install
 
@@ -51,9 +53,19 @@ The selected mode applies immediately and persists in `~/.pi/agent/pretty-tui.js
 
 Press `Ctrl+O` (Pi's default `app.tools.expand` keybinding) to show or hide detailed output, edit diffs, complete `Write` content, full tool details, and thinking content in `compact` or `clean` mode. In clean mode, mouse interaction also supports progressive disclosure: click a group status to retain it as a parent and reveal compact child tools, click one child for its full view, or click the parent again to collapse the group.
 
+## Copy code blocks
+
+In fullscreen TUI mode, fenced Markdown code blocks include a clickable `[Copy]` control in the top rule:
+
+```sh
+pi --tui-mode fullscreen
+```
+
+Clicking it copies only the code content through Pi's native clipboard integration and shows a success or error notification. The control is hidden in regular TUI mode because the terminal keeps mouse input for text selection and scrolling there. Code text remains directly selectable, and the decorative rules contain no side-border characters.
+
 ## Compatibility notice
 
-Tool rendering uses Pi's documented extension APIs. Clean thinking and active-tool state follow Pi's built-in expansion and execution transitions through its exported interactive components. Framing native user messages, rounding the native prompt editor, and changing unordered-list markers require reload-safe runtime patches because Pi does not currently expose public renderer hooks for those presentation details. User Markdown and terminal semantic zones remain handled by Pi, and code blocks use Pi's original renderer without modification.
+Tool rendering uses Pi's documented extension APIs. Clean thinking and active-tool state follow Pi's built-in expansion and execution transitions through its exported interactive components. Framing native user messages, rounding the native prompt editor, changing unordered-list markers, and enhancing fenced code blocks require reload-safe runtime patches because Pi does not currently expose public renderer hooks for those presentation details. Markdown parsing, syntax highlighting, and terminal semantic zones remain handled by Pi.
 
 No Pi source files are modified. Runtime patches are removed during session shutdown, but a future Pi release may require this extension to be updated.
 
