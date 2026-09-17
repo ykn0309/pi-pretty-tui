@@ -661,7 +661,10 @@ export default function prettyTui(pi: ExtensionAPI) {
         cached?.memberCount === group.members.length &&
         cached?.last === position.last
       ) {
-        return cached.lines;
+        // Only the stable activity projection is cached. Visible assistant
+        // text belongs outside the collapsible group and must be appended on
+        // every render, including cache hits.
+        return [...cached.lines, ...visibleLines];
       }
       const stateLabel = this.isStreaming ? "Thinking" : "Thought";
       const label = truncateToWidth(stateLabel, Math.max(1, childWidth - 2), "…");
@@ -2097,7 +2100,10 @@ export default function prettyTui(pi: ExtensionAPI) {
     thoughtCount: number,
     activity = "done",
   ): string => {
-    const activityText = typeof activity === "string" ? activity : "done";
+    const rawActivityText = typeof activity === "string" ? activity : "done";
+    const activityText = /^thinking(?:\.\.\.)?$/iu.test(rawActivityText.trim())
+      ? "Thinking"
+      : rawActivityText;
     const countLabel = `${count} tool ${count === 1 ? "call" : "calls"}`;
     const thoughtLabel = thoughtCount > 0
       ? ` · ${thoughtCount} ${thoughtCount === 1 ? "thought" : "thoughts"}`

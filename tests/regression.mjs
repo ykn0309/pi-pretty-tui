@@ -387,6 +387,9 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
   assert.ok(compactMixed.includes("● Thought"));
   assert.ok(compactMixed.includes("Visible final answer"));
   assert.ok(!compactMixed.includes("Thinking..."));
+  const cachedMixed = mixedComponent.render(80).join("\n")
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
+  assert.ok(cachedMixed.includes("Visible final answer"));
   mixedComponent.handleMouse({
     type: "click", button: "left", x: 1, y: 0, width: 80, height: mixedComponent.render(80).length,
   });
