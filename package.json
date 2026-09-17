@@ -1,6 +1,6 @@
 {
   "name": "pi-pretty-tui",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "A beautiful, polished TUI for the Pi coding agent",
   "license": "MIT",
   "author": "Kainan Yang <ykn0309@whu.edu.cn>",
@@ -52,6 +52,6 @@
     "extensions": [
       "./extensions/index.ts"
     ],
-    "image": "https://unpkg.com/pi-pretty-tui@0.1.7/assets/screenshot.png"
+    "image": "https://unpkg.com/pi-pretty-tui@0.1.8/assets/screenshot.png"
   }
 }
