@@ -6,11 +6,11 @@ A beautiful, polished TUI for the [Pi coding agent](https://pi.dev/).
 
 ## Features
 
-- **Collapsible tool activity:** instead of filling the conversation with individual tool calls, supported tools are collected into a single `Running(...)` row while work is in progress and a quiet `Done(...)` row when it finishes. Click the group to reveal its compact child calls, click any child for full details, and click the parent again to collapse everything.
+- **Collapsible activity timeline:** instead of filling the conversation with individual calls, all built-in and third-party tools are collected into a single `Running(...)` row while work is in progress and a quiet `Done(...)` row when it finishes. Expand the group to reveal tools and concise thinking entries in transcript order, then open any child for its complete details.
 - **Useful details on demand:** tool-aware summaries keep paths, commands, results, diffs, file previews, and live shell output concise without removing access to the original content.
 - **A cohesive visual finish:** rounded user messages and prompt input, theme-aware colors, a clear Markdown heading hierarchy, cleaner lists, and rounded syntax-highlighted code blocks make the entire TUI feel intentional. In fullscreen, each fenced code block also includes a native-feeling `[Copy]` control.
 
-Collapsible grouping covers Pi's built-in `read`, `bash`, `edit`, `write`, `grep`, `find`, and `ls` tools. Third-party tools keep their own rendering, and Pi's cursor, IME, autocomplete, mouse interaction, and tool execution behavior remain intact.
+Pi's built-in `read`, `bash`, `edit`, `write`, `grep`, `find`, and `ls` tools receive purpose-built compact views. Third-party tools retain their native renderers inside the same hierarchy. System errors, steering messages, compaction summaries, and visible assistant text remain visible and create hard group boundaries. Pi's cursor, IME, autocomplete, mouse interaction, and tool execution behavior remain intact.
 
 ## Install
 
@@ -24,7 +24,7 @@ Pi may warn that built-in tools are being overridden. This is expected: pi-prett
 
 ## Working with tool calls
 
-Click a `Running(...)` or `Done(...)` row to keep it as a parent and reveal the tools beneath it. Click an individual child to toggle its complete view, or click the parent again to collapse the whole group. Press `Ctrl+O` at any time to use Pi's global expansion control for tool output and thinking content.
+Click a `Running(...)` or `Done(...)` row to keep it as a parent and reveal tools and compact `Thinking(...)` entries beneath it. Click an individual tool or thinking child to toggle its complete view, or click the parent again to collapse the whole group. Press `Ctrl+O` at any time to use Pi's global expansion control for all tool output and thinking content.
 
 ## Rendering modes
 
@@ -49,7 +49,7 @@ npm install
 npm test
 ```
 
-The suite covers live and restored steering/compaction boundaries, parallel completion ownership, orphaned tool calls, duplicate-summary prevention, and fullscreen code-block copy hit regions. GitHub Actions runs the same checks on every push and pull request.
+The suite covers live and restored activity timelines, system/steering/compaction boundaries, built-in and third-party tools, expandable thinking, parallel completion ownership, orphaned calls, duplicate-summary prevention, and fullscreen code-block copy hit regions. GitHub Actions runs the same checks on every push and pull request.
 
 ## Compatibility notice
 

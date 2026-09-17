@@ -4,12 +4,20 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createJiti } from "jiti";
 import {
+  AssistantMessageComponent,
   InteractiveMode,
+  ToolExecutionComponent,
+  initTheme,
 } from "@earendil-works/pi-coding-agent";
-import { Markdown, TuiAltScreen, visibleWidth } from "@earendil-works/pi-tui";
+import { Markdown, Text, TuiAltScreen, visibleWidth } from "@earendil-works/pi-tui";
+import {
+  ActivityTimeline,
+  assistantSystemBoundary,
+} from "../extensions/activity-timeline.ts";
 
 const agentDir = mkdtempSync(join(tmpdir(), "pi-pretty-tui-test-"));
 process.env.PI_CODING_AGENT_DIR = agentDir;
+initTheme("dark", false);
 
 const jiti = createJiti(import.meta.url);
 const extension = await jiti.import(join(process.cwd(), "extensions/index.ts"), { default: true });
@@ -109,6 +117,24 @@ const renderCollapsedSummaries = async (entries) => {
   return visible;
 };
 const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool/.exec(output)?.[1]));
+
+// The transcript-first model keeps thinking and all tools in order while
+// system errors create hard boundaries.
+{
+  const timeline = new ActivityTimeline();
+  timeline.addThinking("m1", "Plan the work");
+  timeline.addTool("native", "read");
+  timeline.addTool("third-party", "obs_recall");
+  timeline.boundary();
+  timeline.addThinking("m2", "Recover after the boundary");
+  timeline.addTool("after-error", "web_search");
+  assert.deepEqual(
+    timeline.groups().map((group) => group.members.map((member) => member.kind === "tool" ? member.toolCallId : member.messageKey)),
+    [["m1", "native", "third-party"], ["m2", "after-error"]],
+  );
+  assert.equal(assistantSystemBoundary({ role: "assistant", stopReason: "error", content: [] }), true);
+  assert.equal(assistantSystemBoundary({ role: "assistant", stopReason: "toolUse", content: [] }), false);
+}
 
 // A persisted summary may include an orphaned call without a toolResult. It
 // must replace, rather than stack with, a larger inferred fallback summary.
@@ -212,6 +238,103 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
     appendedEntries.at(-1).data.groups.map((group) => group.lastToolCallId),
     ["live-before-steer", "live-before-compact", "live-after-compact"],
   );
+}
+
+// Assistant/system errors are hard boundaries and remain outside activity groups.
+{
+  appendedEntries.length = 0;
+  await emit("session_start", {}, sessionContext([]));
+  await emit("agent_start");
+  await emit("tool_execution_start", { toolName: "bash", toolCallId: "before-system-error" });
+  await emit("tool_execution_end", { toolName: "bash", toolCallId: "before-system-error", isError: false });
+  await emit("message_end", {
+    message: { role: "assistant", stopReason: "error", errorMessage: "fetch failed", content: [] },
+  });
+  await emit("tool_execution_start", { toolName: "obs_recall", toolCallId: "after-system-error" });
+  await emit("tool_execution_end", { toolName: "obs_recall", toolCallId: "after-system-error", isError: false });
+  await emit("agent_settled");
+  assert.deepEqual(
+    appendedEntries.at(-1).data.groups.map((group) => group.lastToolCallId),
+    ["before-system-error", "after-system-error"],
+  );
+}
+
+// Third-party tools use their native renderer inside the same clean hierarchy,
+// and thinking is a compact sibling that can be expanded independently.
+{
+  await emit("session_start", {}, sessionContext([]));
+  await emit("agent_start");
+  const ui = { requestRender() {} };
+  const thirdPartyDefinition = {
+    renderShell: "self",
+    renderCall: (_args, toolTheme) => new Text(toolTheme.fg("accent", "Third-party call"), 0, 0),
+    renderResult: (_result, _options, toolTheme) => new Text(toolTheme.fg("toolOutput", "Third-party result"), 0, 0),
+  };
+  const toolOnly = new ToolExecutionComponent(
+    "web_search",
+    "external-only",
+    {},
+    undefined,
+    thirdPartyDefinition,
+    ui,
+    process.cwd(),
+  );
+  toolOnly.markExecutionStarted();
+  const toolOnlyCollapsed = toolOnly.render(80);
+  assert.ok(toolOnlyCollapsed.join("\n").replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").includes("Running("));
+  toolOnly.handleMouse({
+    type: "click", button: "left", x: 1, y: 1, width: 80, height: toolOnlyCollapsed.length,
+  });
+  assert.ok(toolOnly.render(80).join("\n").includes("└─"));
+
+  await emit("session_start", {}, sessionContext([]));
+  await emit("agent_start");
+  const message = {
+    role: "assistant",
+    timestamp: 12345,
+    stopReason: "toolUse",
+    content: [
+      { type: "thinking", thinking: "Inspect compatibility\n\nPreserve native rendering" },
+      { type: "toolCall", id: "external-tool", name: "obs_recall", arguments: {} },
+    ],
+  };
+  const thinkingComponent = new AssistantMessageComponent(message);
+  const toolComponent = new ToolExecutionComponent(
+    "obs_recall",
+    "external-tool",
+    {},
+    undefined,
+    thirdPartyDefinition,
+    ui,
+    process.cwd(),
+  );
+  toolComponent.markExecutionStarted();
+  toolComponent.updateResult({ content: [{ type: "text", text: "ok" }], isError: false });
+
+  const collapsedThinking = thinkingComponent.render(80);
+  const collapsedTool = toolComponent.render(80);
+  const collapsedThinkingText = collapsedThinking.join("\n").replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
+  assert.ok(collapsedThinkingText.includes("Running("));
+  assert.equal(collapsedTool.length, 0);
+
+  thinkingComponent.handleMouse({
+    type: "click", button: "left", x: 1, y: 1, width: 80, height: collapsedThinking.length,
+  });
+  const compactThinking = thinkingComponent.render(80).join("\n");
+  const expandedTool = toolComponent.render(80).join("\n");
+  assert.ok(compactThinking.includes("├─") && compactThinking.includes("Thinking(Inspect compatibility"));
+  assert.ok(expandedTool.includes("└─") && expandedTool.includes("Third-party call"));
+
+  const compactLines = thinkingComponent.render(80);
+  thinkingComponent.handleMouse({
+    type: "click", button: "left", x: 8, y: 2, width: 80, height: compactLines.length,
+  });
+  const fullThinking = thinkingComponent.render(80).join("\n");
+  assert.ok(fullThinking.includes("Preserve native rendering"));
+  for (const width of [1, 4, 8, 12]) {
+    const lines = [...thinkingComponent.render(width), ...toolComponent.render(width)];
+    assert.ok(lines.every((line) => visibleWidth(line) <= width));
+  }
 }
 
 // Fullscreen Markdown shows per-block Copy controls with precise hit regions;
@@ -360,9 +483,15 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
 
 const patchedSelectionHandler = TuiAltScreen.prototype.handleSelectionMouseEvent;
 const patchedMarkdownRenderToken = Markdown.prototype.renderToken;
+const patchedAssistantRender = AssistantMessageComponent.prototype.render;
+const patchedAssistantMouse = AssistantMessageComponent.prototype.handleMouse;
+const patchedToolRender = ToolExecutionComponent.prototype.render;
 await emit("session_shutdown");
 assert.equal(Markdown.prototype.handleMouse, undefined);
 assert.notEqual(Markdown.prototype.renderToken, patchedMarkdownRenderToken);
+assert.notEqual(AssistantMessageComponent.prototype.render, patchedAssistantRender);
+assert.notEqual(AssistantMessageComponent.prototype.handleMouse, patchedAssistantMouse);
+assert.notEqual(ToolExecutionComponent.prototype.render, patchedToolRender);
 assert.notEqual(TuiAltScreen.prototype.handleSelectionMouseEvent, patchedSelectionHandler);
 rmSync(agentDir, { recursive: true, force: true });
 console.log("Regression suite passed.");
