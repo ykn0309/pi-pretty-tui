@@ -921,12 +921,15 @@ assert.notEqual(TuiAltScreen.prototype.handleSelectionMouseEvent, patchedSelecti
   assert.deepEqual(disabledTools, []);
   assert.ok(disabledCommands.has("pretty-tui"));
   const notices = [];
+  let reloads = 0;
   await disabledCommands.get("pretty-tui").handler("enable", {
     hasUI: true,
     ui: { notify(message, type) { notices.push([message, type]); } },
+    async reload() { reloads += 1; },
   });
   assert.equal(JSON.parse(readFileSync(join(disabledAgentDir, "pretty-tui.json"), "utf8")).enabled, true);
-  assert.ok(notices.at(-1)[0].includes("/reload"));
+  assert.equal(reloads, 1);
+  assert.ok(notices.at(-1)[0].includes("reloading"));
   rmSync(disabledAgentDir, { recursive: true, force: true });
   process.env.PI_CODING_AGENT_DIR = agentDir;
 }

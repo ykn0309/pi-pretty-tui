@@ -30,7 +30,7 @@ Informational extension notifications and displayed custom messages emitted duri
 
 ## Settings and rendering modes
 
-Run `/pretty-tui` to open the extension settings. The `Enabled` switch persists whether pi-pretty-tui installs its render patches and built-in tool renderers; changing it requires `/reload`. You can also use `/pretty-tui enable` and `/pretty-tui disable` directly. While disabled, the settings command remains available and Pi uses its native rendering.
+Run `/pretty-tui` to open the extension settings. The `Enabled` switch persists whether pi-pretty-tui installs its render patches and built-in tool renderers. Changing it automatically runs Pi's official reload flow, so no manual `/reload` is needed. You can also use `/pretty-tui enable` and `/pretty-tui disable` directly. While disabled, the settings command remains available and Pi uses its native rendering.
 
 The extension supports three persistent rendering modes: `clean` (default), `compact`, and `full`. Choose one interactively, or use `/pretty-tui clean`, `/pretty-tui compact`, `/pretty-tui full`, and `/pretty-tui status` directly. Settings are stored in `~/.pi/agent/pretty-tui.json` or under the directory selected by `PI_CODING_AGENT_DIR`.
 

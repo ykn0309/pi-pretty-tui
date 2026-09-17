@@ -272,8 +272,8 @@ export default function prettyTui(pi: ExtensionAPI) {
     description: "Configure pi-pretty-tui",
     getArgumentCompletions: (prefix: string) => {
       const items = [
-        { value: "enable", label: "enable", description: "Enable the extension after reload" },
-        { value: "disable", label: "disable", description: "Disable the extension after reload" },
+        { value: "enable", label: "enable", description: "Enable the extension and reload automatically" },
+        { value: "disable", label: "disable", description: "Disable the extension and reload automatically" },
         { value: "full", label: "full", description: "Full tool details and output" },
         { value: "compact", label: "compact", description: "Concise summaries for all built-in tools" },
         { value: "clean", label: "clean", description: "Group supported tools into Running/Done status" },
@@ -293,7 +293,7 @@ export default function prettyTui(pi: ExtensionAPI) {
           );
           return;
         }
-        const enabled = `Enabled — ${config.enabled !== false ? "on" : "off"} (reload required to change)`;
+        const enabled = `Enabled — ${config.enabled !== false ? "on" : "off"}`;
         const full = `Full — full tool details and output${renderMode === "full" ? " (current)" : ""}`;
         const compact = `Compact — concise summaries for all built-in tools${renderMode === "compact" ? " (current)" : ""}`;
         const clean = `Clean — group supported tools into Running/Done status${renderMode === "clean" ? " (current)" : ""}`;
@@ -319,15 +319,23 @@ export default function prettyTui(pi: ExtensionAPI) {
         const enabled = requested === "enable";
         try {
           saveEnabled(enabled);
-          ctx.ui.notify(
-            `pi-pretty-tui ${enabled ? "enabled" : "disabled"}; run /reload to apply`,
-            "info",
-          );
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           ctx.ui.notify(`Could not save pi-pretty-tui setting: ${message}`, "error");
+          return;
         }
-        return;
+        ctx.ui.notify(
+          `pi-pretty-tui ${enabled ? "enabled" : "disabled"}; reloading…`,
+          "info",
+        );
+        try {
+          await ctx.reload();
+          return;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          ctx.ui.notify(`Setting saved, but automatic reload failed: ${message}`, "warning");
+          return;
+        }
       }
       if (requested !== "full" && requested !== "compact" && requested !== "clean") {
         ctx.ui.notify("Usage: /pretty-tui [enable|disable|full|compact|clean|status]", "error");
