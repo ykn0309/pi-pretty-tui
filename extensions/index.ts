@@ -1551,6 +1551,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     const originalToolRender = toolExecutionPrototype.render;
     const originalToolHandleMouse = toolExecutionPrototype.handleMouse;
     const renderedModeKey = Symbol("pretty-tui.tool-rendered-mode");
+    const cleanChildRenderCacheKey = Symbol("pretty-tui.clean-child-render-cache");
     const refreshActivityGroup = (group: ActivityGroup) => {
       for (const member of group.members) {
         if (member.kind === "tool" && member.toolCallId) {
@@ -1638,22 +1639,53 @@ export default function prettyTui(pi: ExtensionAPI) {
         childWidth,
       } = activityTreeStyle(group, member, width, childTheme);
       const thirdParty = !SPECIALIZED_TOOL_NAMES.has(this.toolName);
-      const lines = thirdParty && !this.expanded
-        ? renderThirdPartyCompact(this, childWidth, childTheme)
-        : originalToolRender.call(this, childWidth);
-      if (lines.length === 0) return lines;
+      const cacheable = !this.expanded && Boolean(this.result) && !this.isPartial;
+      const cached = cacheable ? this[cleanChildRenderCacheKey] : undefined;
+      let decoratedContent: string[];
+      if (
+        cached?.width === width &&
+        cached?.childWidth === childWidth &&
+        cached?.result === this.result &&
+        cached?.args === this.args &&
+        cached?.callRenderer === this.callRendererComponent &&
+        cached?.resultRenderer === this.resultRendererComponent &&
+        cached?.theme === childTheme &&
+        cached?.last === position.last &&
+        cached?.memberCount === group.members.length
+      ) {
+        decoratedContent = cached.lines;
+      } else {
+        const lines = thirdParty && !this.expanded
+          ? renderThirdPartyCompact(this, childWidth, childTheme)
+          : originalToolRender.call(this, childWidth);
+        if (lines.length === 0) return lines;
 
-      const nativeContentLines = lines[0] === "" ? lines.slice(1) : lines;
-      const contentLines = thirdParty && this.expanded
-        ? nativeContentLines.map(stripAnsiBackgrounds)
-        : nativeContentLines;
-      const decoratedContent = contentLines.map((line: string, index: number) =>
-        truncateToWidth(
-          (index === 0 ? childPrefix : continuation) + line,
-          Math.max(1, width),
-          "",
-        )
-      );
+        const nativeContentLines = lines[0] === "" ? lines.slice(1) : lines;
+        const contentLines = thirdParty && this.expanded
+          ? nativeContentLines.map(stripAnsiBackgrounds)
+          : nativeContentLines;
+        decoratedContent = contentLines.map((line: string, index: number) =>
+          truncateToWidth(
+            (index === 0 ? childPrefix : continuation) + line,
+            Math.max(1, width),
+            "",
+          )
+        );
+        if (cacheable) {
+          this[cleanChildRenderCacheKey] = {
+            width,
+            childWidth,
+            result: this.result,
+            args: this.args,
+            callRenderer: this.callRendererComponent,
+            resultRenderer: this.resultRendererComponent,
+            theme: childTheme,
+            last: position.last,
+            memberCount: group.members.length,
+            lines: decoratedContent,
+          };
+        }
+      }
       if (!position.first) return decoratedContent;
       return ["", ...renderActivityGroupSummary(group, width), ...decoratedContent];
     };

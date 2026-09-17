@@ -395,7 +395,10 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
   assert.ok(compactThinking.includes("├─") && compactThinking.includes("● Thinking"));
   assert.ok(!compactThinking.includes("Inspect compatibility"));
   assert.ok(compactTool.includes("└─") && compactTool.includes("● Recall Observation"));
+  assert.ok(compactTool.includes("ok"));
   assert.ok(!compactTool.includes("Third-party call"));
+  toolComponent.updateResult({ content: [{ type: "text", text: "updated result" }], isError: false });
+  assert.ok(toolComponent.render(80).join("\n").includes("updated result"));
 
   toolComponent.handleMouse({
     type: "click", button: "left", x: 8, y: 1, width: 80, height: toolComponent.render(80).length,
