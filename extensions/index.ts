@@ -729,6 +729,24 @@ export default function prettyTui(pi: ExtensionAPI) {
       if (!member || !group || group.toolCallIds.length === 0) return undefined;
       const position = activityMemberPosition(group, member);
       const isLeftClick = event.type === "click" && event.button === "left";
+
+      // A completed assistant message can contain both the final Thought and
+      // visible Markdown. The Markdown is rendered after the activity rows;
+      // route clicks in that suffix back to Pi's native component so links,
+      // text selection, and code-block Copy controls keep working.
+      if (visibleAssistantText(message)) {
+        const visibleLines = originalRender.call(this, event.width);
+        const renderedLines = patchedRender.call(this, event.width);
+        const activityHeight = Math.max(0, renderedLines.length - visibleLines.length);
+        if (event.y >= activityHeight) {
+          return originalHandleMouse.call(this, {
+            ...event,
+            y: event.y - activityHeight,
+            height: visibleLines.length,
+          });
+        }
+      }
+
       if (!activityGroupRevealed(group)) {
         if (!isLeftClick) return undefined;
         if (position.first) {

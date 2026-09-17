@@ -714,6 +714,72 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
   })?.handled, true);
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(nativeCopies, ["const a = 1;"]);
+
+  const copyFirst = {
+    type: "message",
+    id: "30",
+    parentId: null,
+    timestamp: "2026-01-01T00:00:30.000Z",
+    message: {
+      role: "assistant",
+      timestamp: 30_000,
+      content: [
+        { type: "thinking", thinking: "Prepare copied answer" },
+        { type: "toolCall", id: "copy-tool", name: "obs_recall", arguments: {} },
+      ],
+    },
+  };
+  const copyMixed = {
+    type: "message",
+    id: "32",
+    parentId: "31",
+    timestamp: "2026-01-01T00:00:32.000Z",
+    message: {
+      role: "assistant",
+      timestamp: 32_000,
+      content: [
+        { type: "thinking", thinking: "Finish copied answer" },
+        { type: "text", text: "Answer:\n\n```sh\necho mixed response\n```" },
+      ],
+    },
+  };
+  await emit("session_start", {}, sessionContext([
+    copyFirst,
+    result("31", "30", "copy-tool"),
+    copyMixed,
+  ]));
+  const copyFirstComponent = new AssistantMessageComponent(copyFirst.message);
+  const copyMixedComponent = new AssistantMessageComponent(copyMixed.message);
+  copyFirstComponent.handleMouse({
+    type: "click", button: "left", x: 1, y: 1, width: 42, height: copyFirstComponent.render(42).length,
+  });
+  // Keep the regression focused on AssistantMessage mouse-coordinate routing;
+  // Pi's assistant Markdown transformer is tested independently upstream.
+  copyMixedComponent.contentContainer.clear();
+  copyMixedComponent.contentContainer.addChild(new Markdown(
+    "```sh\necho mixed response\n```",
+    1,
+    0,
+    markdownTheme,
+  ));
+  const mixedCopyLines = copyMixedComponent.render(42);
+  const mixedCopyPlain = mixedCopyLines.map((line) =>
+    line
+      .replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "")
+      .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, ""),
+  );
+  const mixedCopyY = mixedCopyPlain.findIndex((line) => line.includes("[Copy]"));
+  assert.ok(mixedCopyY >= 0);
+  const mixedCopyX = mixedCopyPlain[mixedCopyY].indexOf("[Copy]") + 1;
+  assert.equal(copyMixedComponent.handleMouse({
+    type: "press", button: "left", x: mixedCopyX, y: mixedCopyY, width: 42, height: mixedCopyLines.length,
+  })?.handled, true);
+  assert.equal(copyMixedComponent.handleMouse({
+    type: "click", button: "left", x: mixedCopyX, y: mixedCopyY, width: 42, height: mixedCopyLines.length,
+  })?.handled, true);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(nativeCopies, ["const a = 1;", "echo mixed response"]);
+
   assert.ok(lines.every((line) => visibleWidth(line) <= 42));
   for (const width of [1, 4, 7, 8, 17, 18, 24]) {
     const narrow = new Markdown("```sh\necho 12345678901234567890\n```", 0, 0, markdownTheme).render(width);
