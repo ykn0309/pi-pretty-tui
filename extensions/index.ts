@@ -619,7 +619,7 @@ export default function prettyTui(pi: ExtensionAPI) {
               ? (text: string) => headingStyle(this.theme.bold(text))
               : level === 5
                 ? headingStyle
-                : (text: string) => this.theme.quote(this.theme.italic(text));
+                : (text: string) => this.applyDefaultStyle(this.theme.italic(text));
         const titleContext = {
           applyText: titleStyle,
           stylePrefix: this.getStylePrefix(titleStyle),
@@ -650,7 +650,9 @@ export default function prettyTui(pi: ExtensionAPI) {
           // Reverse only the rendered title cells: the theme's heading color
           // becomes a compact, content-width background label with no frame.
           const lines = wrapTextWithAnsi(title, maxWidth).map(
-            (line: string) => `\x1b[7m${line}\x1b[27m`,
+            // Bright-white background becomes bright-white text under reverse
+            // video, while mdHeading remains the label background color.
+            (line: string) => `\x1b[107m\x1b[7m${line}\x1b[27m\x1b[49m`,
           );
           return addHeadingSpacing(lines);
         }
