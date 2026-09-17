@@ -169,7 +169,7 @@ export default function prettyTui(pi: ExtensionAPI) {
       fg: (color: string, text: string) => {
         if (color === "accent") return markdownTheme.listBullet(text);
         if (color === "success") return markdownTheme.codeBlock(text);
-        if (color === "border") return markdownTheme.link(text);
+        if (color === "thinkingLow") return markdownTheme.link(text);
         if (color === "dim" || color === "muted" || color === "thinkingText") {
           return markdownTheme.quote(text);
         }
@@ -665,7 +665,7 @@ export default function prettyTui(pi: ExtensionAPI) {
       }
       const stateLabel = this.isStreaming ? "Thinking" : "Thought";
       const label = truncateToWidth(stateLabel, Math.max(1, childWidth - 2), "…");
-      const header = groupTheme.fg("border", "● ") +
+      const header = groupTheme.fg("thinkingLow", "● ") +
         groupTheme.fg("toolTitle", groupTheme.bold(label));
       let contentLines: string[] = [header];
       if (expanded) {
