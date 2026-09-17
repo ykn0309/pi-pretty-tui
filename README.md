@@ -28,9 +28,11 @@ Click a `Running(...)` or `Done(...)` row to keep it as a parent and reveal tool
 
 Informational extension notifications and displayed custom messages emitted during an activity group appear in chronological order as `◇` update members. They remain hidden with the collapsed parent, do not affect tool/thought counts, and preserve custom-message persistence. Warnings and errors retain Pi's native immediate presentation.
 
-## Rendering modes
+## Settings and rendering modes
 
-The extension supports three persistent rendering modes: `clean` (default), `compact`, and `full`. Run `/pretty-tui` to choose one interactively, or use `/pretty-tui clean`, `/pretty-tui compact`, `/pretty-tui full`, and `/pretty-tui status` directly. The selection is stored in `~/.pi/agent/pretty-tui.json` or under the directory selected by `PI_CODING_AGENT_DIR`.
+Run `/pretty-tui` to open the extension settings. The `Enabled` switch persists whether pi-pretty-tui installs its render patches and built-in tool renderers; changing it requires `/reload`. You can also use `/pretty-tui enable` and `/pretty-tui disable` directly. While disabled, the settings command remains available and Pi uses its native rendering.
+
+The extension supports three persistent rendering modes: `clean` (default), `compact`, and `full`. Choose one interactively, or use `/pretty-tui clean`, `/pretty-tui compact`, `/pretty-tui full`, and `/pretty-tui status` directly. Settings are stored in `~/.pi/agent/pretty-tui.json` or under the directory selected by `PI_CODING_AGENT_DIR`.
 
 ## Copy code blocks
 

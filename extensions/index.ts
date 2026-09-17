@@ -62,6 +62,7 @@ const stripAnsiBackgrounds = (value: string): string =>
     return kept.length > 0 ? `\x1b[${kept.join(";")}m` : "";
   });
 type PrettyTuiConfig = {
+  enabled?: boolean;
   mode?: PrettyTuiMode;
   /** Legacy location used by the first mode implementation. */
   bash?: {
@@ -83,6 +84,7 @@ export default function prettyTui(pi: ExtensionAPI) {
   const cwd = process.cwd();
   const configPath = join(getAgentDir(), "pretty-tui.json");
   let config = loadConfig(configPath);
+  const activeForSession = config.enabled !== false;
   const configuredMode = config.mode ?? config.bash?.mode;
   let renderMode: PrettyTuiMode = configuredMode === "full" || configuredMode === "compact" || configuredMode === "clean"
     ? configuredMode
@@ -257,16 +259,21 @@ export default function prettyTui(pi: ExtensionAPI) {
     );
   };
 
-  const saveRenderMode = (mode: PrettyTuiMode) => {
-    config = { ...config, mode };
+  const saveConfig = (nextConfig: Record<string, any>) => {
+    config = nextConfig;
     mkdirSync(getAgentDir(), { recursive: true });
     writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
   };
 
+  const saveRenderMode = (mode: PrettyTuiMode) => saveConfig({ ...config, mode });
+  const saveEnabled = (enabled: boolean) => saveConfig({ ...config, enabled });
+
   pi.registerCommand("pretty-tui", {
-    description: "Configure pi-pretty-tui rendering mode",
+    description: "Configure pi-pretty-tui",
     getArgumentCompletions: (prefix: string) => {
       const items = [
+        { value: "enable", label: "enable", description: "Enable the extension after reload" },
+        { value: "disable", label: "disable", description: "Disable the extension after reload" },
         { value: "full", label: "full", description: "Full tool details and output" },
         { value: "compact", label: "compact", description: "Concise summaries for all built-in tools" },
         { value: "clean", label: "clean", description: "Group supported tools into Running/Done status" },
@@ -280,23 +287,50 @@ export default function prettyTui(pi: ExtensionAPI) {
 
       if (!requested) {
         if (!ctx.hasUI) {
-          ctx.ui.notify(`pi-pretty-tui mode: ${renderMode}`, "info");
+          ctx.ui.notify(
+            `pi-pretty-tui: ${config.enabled !== false ? "enabled" : "disabled"} · mode: ${renderMode}`,
+            "info",
+          );
           return;
         }
+        const enabled = `Enabled — ${config.enabled !== false ? "on" : "off"} (reload required to change)`;
         const full = `Full — full tool details and output${renderMode === "full" ? " (current)" : ""}`;
         const compact = `Compact — concise summaries for all built-in tools${renderMode === "compact" ? " (current)" : ""}`;
         const clean = `Clean — group supported tools into Running/Done status${renderMode === "clean" ? " (current)" : ""}`;
-        const selected = await ctx.ui.select("pi-pretty-tui rendering mode", [full, compact, clean]);
+        const selected = await ctx.ui.select("pi-pretty-tui settings", [enabled, full, compact, clean]);
         if (!selected) return;
-        requested = selected === full ? "full" : selected === compact ? "compact" : "clean";
+        requested = selected === enabled
+          ? config.enabled !== false ? "disable" : "enable"
+          : selected === full
+            ? "full"
+            : selected === compact
+              ? "compact"
+              : "clean";
       }
 
       if (requested === "status") {
-        ctx.ui.notify(`pi-pretty-tui mode: ${renderMode}`, "info");
+        ctx.ui.notify(
+          `pi-pretty-tui: ${config.enabled !== false ? "enabled" : "disabled"} · mode: ${renderMode}`,
+          "info",
+        );
+        return;
+      }
+      if (requested === "enable" || requested === "disable") {
+        const enabled = requested === "enable";
+        try {
+          saveEnabled(enabled);
+          ctx.ui.notify(
+            `pi-pretty-tui ${enabled ? "enabled" : "disabled"}; run /reload to apply`,
+            "info",
+          );
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          ctx.ui.notify(`Could not save pi-pretty-tui setting: ${message}`, "error");
+        }
         return;
       }
       if (requested !== "full" && requested !== "compact" && requested !== "clean") {
-        ctx.ui.notify("Usage: /pretty-tui [full|compact|clean|status]", "error");
+        ctx.ui.notify("Usage: /pretty-tui [enable|disable|full|compact|clean|status]", "error");
         return;
       }
 
@@ -315,6 +349,10 @@ export default function prettyTui(pi: ExtensionAPI) {
       }
     },
   });
+
+  // Keep the settings command available while disabled, but do not install
+  // render patches or override built-in tools until the next enabled reload.
+  if (!activeForSession) return;
 
   // Give Pi's main prompt editor a complete rounded frame. Render the native
   // editor at a two-column narrower width so cursor layout, wrapping, IME, and

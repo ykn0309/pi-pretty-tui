@@ -28,9 +28,11 @@ Pi 可能会提示内置工具被覆盖。这是正常现象：pi-pretty-tui 会
 
 活动组执行期间产生的扩展 info 通知与 displayed custom message 会按真实时间顺序显示为 `◇` 更新成员。它们随父级折叠隐藏，不计入工具或思考数量，并保留 custom message 的持久化语义。warning 和 error 仍使用 Pi 原生的即时展示方式。
 
-## 渲染模式
+## 设置与渲染模式
 
-扩展支持三种可持久化的渲染模式：`clean`（默认）、`compact` 和 `full`。运行 `/pretty-tui` 可交互选择，也可以直接使用 `/pretty-tui clean`、`/pretty-tui compact`、`/pretty-tui full` 和 `/pretty-tui status`。所选设置会保存到 `~/.pi/agent/pretty-tui.json`，或 `PI_CODING_AGENT_DIR` 指定目录中的对应位置。
+运行 `/pretty-tui` 可打开扩展设置。`Enabled` 开关会持久化控制 pi-pretty-tui 是否安装渲染补丁和内置工具 renderer；修改后需要执行 `/reload`。也可以直接使用 `/pretty-tui enable` 和 `/pretty-tui disable`。禁用期间设置命令仍然可用，Pi 会恢复原生渲染。
+
+扩展支持三种可持久化的渲染模式：`clean`（默认）、`compact` 和 `full`。可交互选择，也可以直接使用 `/pretty-tui clean`、`/pretty-tui compact`、`/pretty-tui full` 和 `/pretty-tui status`。设置会保存到 `~/.pi/agent/pretty-tui.json`，或 `PI_CODING_AGENT_DIR` 指定目录中的对应位置。
 
 ## 复制代码块
 

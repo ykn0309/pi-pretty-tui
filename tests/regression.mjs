@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createJiti } from "jiti";
@@ -24,6 +24,7 @@ const jiti = createJiti(import.meta.url);
 const extension = await jiti.import(join(process.cwd(), "extensions/index.ts"), { default: true });
 const handlers = new Map();
 const tools = new Map();
+const commands = new Map();
 const appendedEntries = [];
 const pi = {
   appendEntry(type, data) { appendedEntries.push({ type, data }); },
@@ -32,7 +33,7 @@ const pi = {
     eventHandlers.push(handler);
     handlers.set(name, eventHandlers);
   },
-  registerCommand() {},
+  registerCommand(name, command) { commands.set(name, command); },
   registerEntryRenderer() {},
   registerTool(tool) { tools.set(tool.name, tool); },
 };
@@ -899,5 +900,36 @@ assert.notEqual(CustomMessageComponent.prototype.render, patchedCustomMessageRen
 assert.notEqual(ToolExecutionComponent.prototype.render, patchedToolRender);
 assert.notEqual(InteractiveMode.prototype.showExtensionNotify, patchedShowExtensionNotify);
 assert.notEqual(TuiAltScreen.prototype.handleSelectionMouseEvent, patchedSelectionHandler);
+
+// Disabled startup keeps only the settings command: no tools, event handlers,
+// or prototype patches are installed. The command can persist re-enabling.
+{
+  const disabledAgentDir = mkdtempSync(join(tmpdir(), "pi-pretty-tui-disabled-test-"));
+  writeFileSync(join(disabledAgentDir, "pretty-tui.json"), '{"enabled":false,"mode":"clean"}\n');
+  process.env.PI_CODING_AGENT_DIR = disabledAgentDir;
+  const disabledCommands = new Map();
+  const disabledHandlers = [];
+  const disabledTools = [];
+  extension({
+    appendEntry() {},
+    on(name) { disabledHandlers.push(name); },
+    registerCommand(name, command) { disabledCommands.set(name, command); },
+    registerEntryRenderer() {},
+    registerTool(tool) { disabledTools.push(tool.name); },
+  });
+  assert.deepEqual(disabledHandlers, []);
+  assert.deepEqual(disabledTools, []);
+  assert.ok(disabledCommands.has("pretty-tui"));
+  const notices = [];
+  await disabledCommands.get("pretty-tui").handler("enable", {
+    hasUI: true,
+    ui: { notify(message, type) { notices.push([message, type]); } },
+  });
+  assert.equal(JSON.parse(readFileSync(join(disabledAgentDir, "pretty-tui.json"), "utf8")).enabled, true);
+  assert.ok(notices.at(-1)[0].includes("/reload"));
+  rmSync(disabledAgentDir, { recursive: true, force: true });
+  process.env.PI_CODING_AGENT_DIR = agentDir;
+}
+
 rmSync(agentDir, { recursive: true, force: true });
 console.log("Regression suite passed.");
