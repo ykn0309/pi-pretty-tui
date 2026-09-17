@@ -15,7 +15,6 @@ import {
   copyToClipboard,
   getAgentDir,
   getMarkdownTheme,
-  getSelectListTheme,
   type ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
 import {
@@ -166,15 +165,15 @@ export default function prettyTui(pi: ExtensionAPI) {
 
   const defaultActivityTheme = () => {
     const markdownTheme = getMarkdownTheme();
-    const selectTheme = getSelectListTheme();
     return {
       fg: (color: string, text: string) => {
-        if (color === "accent") return selectTheme.selectedPrefix(text);
-        if (color === "success") return markdownTheme.listBullet(text);
+        if (color === "accent") return markdownTheme.listBullet(text);
+        if (color === "success") return markdownTheme.codeBlock(text);
+        if (color === "border") return markdownTheme.link(text);
         if (color === "dim" || color === "muted" || color === "thinkingText") {
           return markdownTheme.quote(text);
         }
-        return selectTheme.selectedText(text);
+        return text;
       },
       bold: markdownTheme.bold,
       italic: markdownTheme.italic,
@@ -245,8 +244,9 @@ export default function prettyTui(pi: ExtensionAPI) {
     const lines = [theme.fg("accent", "◇ ") + theme.fg("toolTitle", theme.bold(title))];
     if (member.updateContent) {
       const detailWidth = Math.max(1, childWidth - visibleWidth("  │ "));
-      lines.push(...wrapTextWithAnsi(theme.fg("muted", member.updateContent), detailWidth).map((line) =>
-        theme.fg("dim", "  │ ") + line
+      const detailLines = wrapTextWithAnsi(theme.fg("muted", member.updateContent), detailWidth);
+      lines.push(...detailLines.map((line, index) =>
+        theme.fg("dim", index === detailLines.length - 1 ? "  └ " : "  │ ") + line
       ));
     }
     return lines.map((line, index) =>
@@ -628,17 +628,7 @@ export default function prettyTui(pi: ExtensionAPI) {
       }
       thinkingComponents.set(key, this);
       if (!activityFallbackThemes.has(group.id)) {
-        activityFallbackThemes.set(group.id, {
-          fg: (color: string, text: string) => {
-            if (color === "accent" || color === "success") return this.markdownTheme.heading(text);
-            if (color === "dim" || color === "muted" || color === "thinkingText") {
-              return this.markdownTheme.quote(text);
-            }
-            return text;
-          },
-          bold: (text: string) => this.markdownTheme.bold(text),
-          italic: (text: string) => this.markdownTheme.italic(text),
-        });
+        activityFallbackThemes.set(group.id, defaultActivityTheme());
       }
       const position = activityMemberPosition(group, member);
       const visibleLines = visibleAssistantText(message) ? originalRender.call(this, width) : [];
@@ -674,10 +664,9 @@ export default function prettyTui(pi: ExtensionAPI) {
         return cached.lines;
       }
       const stateLabel = this.isStreaming ? "Thinking" : "Thought";
-      const label = truncateToWidth(`● ${stateLabel}`, childWidth, "…");
-      const header = groupTheme
-        ? groupTheme.fg("thinkingText", label)
-        : this.markdownTheme.quote(label);
+      const label = truncateToWidth(stateLabel, Math.max(1, childWidth - 2), "…");
+      const header = groupTheme.fg("border", "● ") +
+        groupTheme.fg("toolTitle", groupTheme.bold(label));
       let contentLines: string[] = [header];
       if (expanded) {
         const detailWidth = Math.max(1, childWidth - visibleWidth("  │ "));
@@ -700,7 +689,9 @@ export default function prettyTui(pi: ExtensionAPI) {
           this[cleanThinkingDetailKey] = detail;
         }
         const detailLines = detail.component.render(detailWidth);
-        contentLines.push(...detailLines.map((line: string) => groupTheme.fg("dim", "  │ ") + line));
+        contentLines.push(...detailLines.map((line: string, index: number) =>
+          groupTheme.fg("dim", index === detailLines.length - 1 ? "  └ " : "  │ ") + line
+        ));
       }
       const decorated = contentLines.map((line, index) =>
         truncateToWidth((index === 0 ? prefix : continuation) + line, Math.max(1, width), "")
@@ -1440,7 +1431,7 @@ export default function prettyTui(pi: ExtensionAPI) {
       const isLast = index === shown.length - 1 && remaining === 0;
       rows.push({
         prefix: theme.fg("dim", isLast ? "   └ " : "   │ "),
-        continuation: theme.fg("dim", "   │ "),
+        continuation: isLast ? "     " : theme.fg("dim", "   │ "),
         content: theme.fg("toolOutput", shown[index] || " "),
       });
     }
@@ -1473,19 +1464,22 @@ export default function prettyTui(pi: ExtensionAPI) {
 
     if (expanded && output) {
       const lines = output.split("\n");
+      while (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
       const shown = lines.slice(0, 40);
-      for (const line of shown) {
+      const omitted = lines.length - shown.length;
+      for (let index = 0; index < shown.length; index++) {
+        const isLast = index === shown.length - 1 && omitted === 0;
         rows.push({
-          prefix: theme.fg("dim", "   │ "),
-          continuation: theme.fg("dim", "   │ "),
-          content: outputStyle(line || " "),
+          prefix: theme.fg("dim", isLast ? "   └ " : "   │ "),
+          continuation: isLast ? "     " : theme.fg("dim", "   │ "),
+          content: outputStyle(shown[index] || " "),
         });
       }
-      if (lines.length > shown.length) {
+      if (omitted > 0) {
         rows.push({
           prefix: theme.fg("muted", "   └ "),
           continuation: "     ",
-          content: theme.fg("muted", `… ${lines.length - shown.length} more lines`),
+          content: theme.fg("muted", `… ${omitted} more lines`),
         });
       }
     }
@@ -1559,7 +1553,7 @@ export default function prettyTui(pi: ExtensionAPI) {
       const isLast = index === shown.length - 1;
       rows.push({
         prefix: theme.fg("dim", isLast ? "   └ " : "   │ "),
-        continuation: theme.fg("dim", "   │ "),
+        continuation: isLast ? "     " : theme.fg("dim", "   │ "),
         content: theme.fg("toolOutput", shown[index] || " "),
       });
     }
@@ -1681,7 +1675,7 @@ export default function prettyTui(pi: ExtensionAPI) {
         ? "success"
         : "accent";
     const title = theme.fg(dotColor, "● ") +
-      theme.fg("toolTitle", theme.bold(label)) +
+      theme.fg("accent", theme.bold(label)) +
       (args ? theme.fg("muted", `(${args})`) : "");
     const result = thirdPartyResultSummary(component);
     const resultColor = component.result?.isError ? "error" : "muted";
@@ -1915,8 +1909,11 @@ export default function prettyTui(pi: ExtensionAPI) {
             const nativeContentLines = nativeLines[0] === "" ? nativeLines.slice(1) : nativeLines;
             contentLines = [
               summaryLines[0],
-              ...nativeContentLines.map((line: string) =>
-                childTheme.fg("dim", detailPrefix) + stripAnsiBackgrounds(line)
+              ...nativeContentLines.map((line: string, index: number) =>
+                childTheme.fg(
+                  "dim",
+                  index === nativeContentLines.length - 1 ? "  └ " : detailPrefix,
+                ) + stripAnsiBackgrounds(line)
               ),
             ];
           } else {

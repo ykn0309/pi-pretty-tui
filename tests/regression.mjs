@@ -553,7 +553,8 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
   const compactTool = toolComponent.render(80).join("\n");
   const infoUpdate = infoComponents.map((component) => component.render(80).join("\n")).join("\n");
   const customUpdate = customComponent.render(80).join("\n");
-  assert.ok(compactThinking.includes("├─") && compactThinking.includes("● Thought"));
+  const compactThinkingText = compactThinking.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
+  assert.ok(compactThinkingText.includes("├─") && compactThinkingText.includes("● Thought"));
   assert.ok(!compactThinking.includes("Inspect compatibility"));
   const compactToolText = compactTool.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
   const infoUpdateText = infoUpdate.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
@@ -562,6 +563,7 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
   assert.ok(infoUpdateText.includes("◇ Footer info"));
   assert.ok(customUpdate.includes("└─") && customUpdate.includes("Web Search Content Ready"));
   assert.ok(customUpdate.includes("Content fetched for 2/3 URLs"));
+  assert.ok(customUpdate.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").includes("└ Content fetched"));
   assert.ok(!/\x1b\[(?:4[0-9]|10[0-7]|48(?:;|:))/u.test(customUpdate));
   assert.ok(!compactTool.includes("Third-party call"));
   toolComponent.updateResult({ content: [{ type: "text", text: "updated result" }], isError: false });
@@ -575,6 +577,7 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
   assert.ok(expandedToolText.includes("● Recall Observation"));
   assert.ok(expandedToolText.includes("│") && expandedToolText.includes("Third-party call"));
   assert.ok(expandedTool.includes("Money saved · Third-party result"));
+  assert.ok(expandedToolText.includes("└ Money saved · Third-party result"));
   assert.ok(!/\x1b\[(?:4[0-9]|10[0-7]|48(?:;|:))/u.test(expandedTool));
   toolComponent.handleMouse({
     type: "click", button: "left", x: 8, y: 0, width: 80, height: toolComponent.render(80).length,
@@ -589,14 +592,16 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
     type: "click", button: "left", x: 8, y: 2, width: 80, height: compactLines.length,
   });
   const fullThinking = thinkingComponent.render(80).join("\n");
-  assert.ok(fullThinking.includes("● Thought"));
+  const fullThinkingText = fullThinking.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
+  assert.ok(fullThinkingText.includes("● Thought"));
   assert.ok(fullThinking.includes("│") && fullThinking.includes("Preserve native rendering"));
+  assert.ok(fullThinking.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").includes("└ Preserve native rendering"));
   assert.ok(!fullThinking.includes("Thinking..."));
   thinkingComponent.handleMouse({
     type: "click", button: "left", x: 8, y: 2, width: 80, height: thinkingComponent.render(80).length,
   });
   const reCollapsedThinking = thinkingComponent.render(80).join("\n");
-  assert.ok(reCollapsedThinking.includes("● Thought"));
+  assert.ok(reCollapsedThinking.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").includes("● Thought"));
   assert.ok(!reCollapsedThinking.includes("Preserve native rendering"));
   thinkingComponent.handleMouse({
     type: "click", button: "left", x: 1, y: 1, width: 80, height: thinkingComponent.render(80).length,
