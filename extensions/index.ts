@@ -612,14 +612,17 @@ export default function prettyTui(pi: ExtensionAPI) {
           return lines;
         };
         const headingStyle = (text: string) => this.theme.heading(text);
+        const whiteStyle = (text: string) => `\x1b[97m${text}\x1b[39m`;
         const titleStyle =
-          level === 1 || level === 2 || level === 3
+          level === 1 || level === 3
             ? (text: string) => headingStyle(this.theme.bold(this.theme.underline(text)))
-            : level === 4
-              ? (text: string) => headingStyle(this.theme.bold(text))
-              : level === 5
-                ? headingStyle
-                : (text: string) => this.applyDefaultStyle(this.theme.italic(text));
+            : level === 2
+              ? (text: string) => whiteStyle(this.theme.bold(this.theme.underline(text)))
+              : level === 4
+                ? (text: string) => headingStyle(this.theme.bold(text))
+                : level === 5
+                  ? headingStyle
+                  : (text: string) => this.theme.quote(this.theme.italic(text));
         const titleContext = {
           applyText: titleStyle,
           stylePrefix: this.getStylePrefix(titleStyle),
@@ -650,9 +653,9 @@ export default function prettyTui(pi: ExtensionAPI) {
           // Reverse only the rendered title cells: the theme's heading color
           // becomes a compact, content-width background label with no frame.
           const lines = wrapTextWithAnsi(title, maxWidth).map(
-            // Bright-white background becomes bright-white text under reverse
-            // video, while mdHeading remains the label background color.
-            (line: string) => `\x1b[107m\x1b[7m${line}\x1b[27m\x1b[49m`,
+            // A dark amber background keeps the white label text readable in
+            // both dark and light terminal themes.
+            (line: string) => `\x1b[48;5;94m${line}\x1b[49m`,
           );
           return addHeadingSpacing(lines);
         }
