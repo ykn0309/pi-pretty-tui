@@ -433,6 +433,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     const originalMessageKey = Symbol("pretty-tui.original-assistant-message");
     const renderedModeKey = Symbol("pretty-tui.rendered-assistant-mode");
     const renderedExpansionKey = Symbol("pretty-tui.rendered-assistant-expansion");
+    const cleanThinkingRenderCacheKey = Symbol("pretty-tui.clean-thinking-render-cache");
 
     const eligibleThinking = (message: any) =>
       Array.isArray(message?.content) &&
@@ -520,7 +521,8 @@ export default function prettyTui(pi: ExtensionAPI) {
         });
       }
       const position = activityMemberPosition(group, member);
-      if (!activityGroupRevealed(group)) {
+      const revealed = activityGroupRevealed(group);
+      if (!revealed) {
         return position.first
           ? ["", ...renderActivityGroupSummary(group, width, true)]
           : [];
@@ -534,6 +536,21 @@ export default function prettyTui(pi: ExtensionAPI) {
         groupTheme,
       );
       const expanded = cleanToolsExpanded || expandedThinkingMembers.has(member.id);
+      const settledOwner = position.first ? activityGroupOwner(group) : undefined;
+      const stableSummary = !position.first || Boolean(
+        settledOwner && settledSummaries.has(settledOwner) && !toolActivityHolds.has(settledOwner),
+      );
+      const cacheable = !expanded && !this.isStreaming && stableSummary;
+      const cached = cacheable ? this[cleanThinkingRenderCacheKey] : undefined;
+      if (
+        cached?.width === width &&
+        cached?.message === message &&
+        cached?.theme === groupTheme &&
+        cached?.memberCount === group.members.length &&
+        cached?.last === position.last
+      ) {
+        return cached.lines;
+      }
       let contentLines: string[];
       if (expanded) {
         const nativeLines = originalRender.call(this, childWidth);
@@ -547,8 +564,20 @@ export default function prettyTui(pi: ExtensionAPI) {
       const decorated = contentLines.map((line, index) =>
         truncateToWidth((index === 0 ? prefix : continuation) + line, Math.max(1, width), "")
       );
-      if (!position.first) return decorated;
-      return ["", ...renderActivityGroupSummary(group, width), ...decorated];
+      const output = position.first
+        ? ["", ...renderActivityGroupSummary(group, width), ...decorated]
+        : decorated;
+      if (cacheable) {
+        this[cleanThinkingRenderCacheKey] = {
+          width,
+          message,
+          theme: groupTheme,
+          memberCount: group.members.length,
+          last: position.last,
+          lines: output,
+        };
+      }
+      return output;
     };
 
     const patchedHandleMouse = function (this: any, event: any) {
@@ -563,7 +592,8 @@ export default function prettyTui(pi: ExtensionAPI) {
       const position = activityMemberPosition(group, member);
       const isLeftClick = event.type === "click" && event.button === "left";
       if (!activityGroupRevealed(group)) {
-        if (position.first && isLeftClick) {
+        if (!isLeftClick) return undefined;
+        if (position.first) {
           revealedActivityGroups.add(group.id);
           for (const toolCallId of group.toolCallIds) cleanCompactToolCallIds.add(toolCallId);
           refreshGroup(group);
@@ -1703,7 +1733,7 @@ export default function prettyTui(pi: ExtensionAPI) {
         revealCleanGroup(group, this.ui);
         return { handled: true };
       }
-      if (!revealed) return { handled: true };
+      if (!revealed) return isLeftClick ? { handled: true } : undefined;
 
       const summaryHeight = position.first ? renderActivityGroupSummary(group, event.width).length : 0;
       if (position.first && event.y > 0 && event.y <= summaryHeight && isLeftClick) {

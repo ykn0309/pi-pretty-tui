@@ -386,6 +386,11 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
   assert.ok(collapsedThinkingText.includes("Running("));
   assert.ok(collapsedThinkingText.includes("1 thought"));
   assert.equal(collapsedTool.length, 0);
+  const wheelEvent = {
+    type: "scroll", direction: "up", x: 1, y: 1, width: 80, height: collapsedThinking.length,
+  };
+  assert.equal(thinkingComponent.handleMouse(wheelEvent), undefined);
+  assert.equal(toolComponent.handleMouse(wheelEvent), undefined);
 
   thinkingComponent.handleMouse({
     type: "click", button: "left", x: 1, y: 1, width: 80, height: collapsedThinking.length,
