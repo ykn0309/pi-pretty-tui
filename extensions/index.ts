@@ -630,21 +630,26 @@ export default function prettyTui(pi: ExtensionAPI) {
           const heavy = level === 1;
           const horizontal = heavy ? "━" : "─";
           const vertical = heavy ? "┃" : "│";
-          const innerWidth = maxWidth - 4;
-          const titleLines = wrapTextWithAnsi(title, Math.max(1, innerWidth));
+          const maximumInnerWidth = maxWidth - 4;
+          const titleLines = wrapTextWithAnsi(title, Math.max(1, maximumInnerWidth));
+          const innerWidth = Math.max(
+            1,
+            ...titleLines.map((line: string) => visibleWidth(line)),
+          );
+          const frameWidth = Math.min(maxWidth, innerWidth + 4);
           const frameStyle = (text: string) => headingStyle(this.theme.bold(text));
           // Reverse video turns the theme's heading foreground into a matching,
           // terminal-aware fill without hard-coding light or dark RGB values.
           const fill = (text: string) => `\x1b[7m${text}\x1b[27m`;
           const lines = [
-            fill(frameStyle(`╭${horizontal.repeat(maxWidth - 2)}╮`)),
+            fill(frameStyle(`╭${horizontal.repeat(frameWidth - 2)}╮`)),
             ...titleLines.map((line: string) => {
               const padding = " ".repeat(Math.max(0, innerWidth - visibleWidth(line)));
               return fill(
                 frameStyle(`${vertical} `) + line + frameStyle(`${padding} ${vertical}`),
               );
             }),
-            fill(frameStyle(`╰${horizontal.repeat(maxWidth - 2)}╯`)),
+            fill(frameStyle(`╰${horizontal.repeat(frameWidth - 2)}╯`)),
           ];
           return addHeadingSpacing(lines);
         }

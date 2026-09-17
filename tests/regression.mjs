@@ -240,8 +240,8 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
   }, { get: (target, key) => target[key] ?? ((text) => text) });
 
   const headingCases = [
-    ["# One", ["╭━━━━━━━━━━━━━━━━━━╮", "┃ One              ┃", "╰━━━━━━━━━━━━━━━━━━╯"]],
-    ["## Two", ["╭──────────────────╮", "│ Two              │", "╰──────────────────╯"]],
+    ["# One", ["╭━━━━━╮", "┃ One ┃", "╰━━━━━╯"]],
+    ["## Two", ["╭─────╮", "│ Two │", "╰─────╯"]],
     ["### Three", ["Three"]],
     ["#### Four", ["Four"]],
     ["##### Five", ["┄┄ Five ┄┄"]],
