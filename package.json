@@ -26,7 +26,6 @@
   ],
   "files": [
     "extensions",
-    "themes",
     "assets",
     "README.md",
     "README.zh-CN.md",
@@ -52,9 +51,6 @@
   "pi": {
     "extensions": [
       "./extensions/index.ts"
-    ],
-    "themes": [
-      "./themes"
     ],
     "image": "https://unpkg.com/pi-pretty-tui@0.1.7/assets/screenshot.png"
   }

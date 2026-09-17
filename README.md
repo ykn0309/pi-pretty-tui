@@ -22,8 +22,6 @@ Restart Pi or run `/reload` after installation.
 
 Pi may warn that built-in tools are being overridden. This is expected: pi-pretty-tui re-registers Pi's built-in tools and delegates execution to their original implementations, changing only their TUI renderers.
 
-The package also includes optional `pretty-tui-dark` and `pretty-tui-light` themes. Select either theme through `/settings`; installation does not replace your active theme automatically.
-
 ## Working with tool calls
 
 Click a `Running(...)` or `Done(...)` row to keep it as a parent and reveal the tools beneath it. Click an individual child to toggle its complete view, or click the parent again to collapse the whole group. Press `Ctrl+O` at any time to use Pi's global expansion control for tool output and thinking content.

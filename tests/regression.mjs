@@ -229,7 +229,7 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
     InteractiveMode.prototype.renderSessionEntries.call({ ui: fullscreenUi }, []);
   } catch {}
   const markdownTheme = new Proxy({
-    heading: (text) => `\x1b[33m${text}\x1b[39m`,
+    heading: (text) => `\x1b[38;2;240;198;116m${text}\x1b[39m`,
     quote: (text) => `\x1b[90m${text}\x1b[39m`,
     bold: (text) => `\x1b[1m${text}\x1b[22m`,
     italic: (text) => `\x1b[3m${text}\x1b[23m`,
