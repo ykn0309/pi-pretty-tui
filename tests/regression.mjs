@@ -400,6 +400,32 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
   assert.ok(!expandedMixed.includes("Thinking..."));
 }
 
+// A normal response can contain Thinking plus visible text without making any
+// tool call. Clean mode must never hide that final answer behind a tool-only
+// activity projection.
+{
+  const noToolMixed = {
+    type: "message",
+    id: "25",
+    parentId: null,
+    timestamp: "2026-01-01T00:00:25.000Z",
+    message: {
+      role: "assistant",
+      timestamp: 25_000,
+      stopReason: "stop",
+      content: [
+        { type: "thinking", thinking: "Finalize without tools" },
+        { type: "text", text: "Visible answer without tool calls" },
+      ],
+    },
+  };
+  await emit("session_start", {}, sessionContext([noToolMixed]));
+  const noToolMixedComponent = new AssistantMessageComponent(noToolMixed.message);
+  const noToolMixedText = noToolMixedComponent.render(80).join("\n")
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
+  assert.ok(noToolMixedText.includes("Visible answer without tool calls"));
+}
+
 // Persisted custom_message entries restore as ordered activity updates instead
 // of falling back to Pi's purple CustomMessage box.
 {

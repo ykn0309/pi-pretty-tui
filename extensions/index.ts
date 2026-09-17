@@ -627,7 +627,11 @@ export default function prettyTui(pi: ExtensionAPI) {
       const group = member ? activityTimeline.groupForMember(member.id) : undefined;
       if (!member || !group) return [];
       if (group.toolCallIds.length === 0) {
-        return cleanToolsExpanded ? originalRender.call(this, width) : [];
+        // Activity groups are tool-oriented. A model may finish with Thinking
+        // and visible text without calling a tool; only the Thinking portion
+        // is filtered from Pi's native component, so always preserve the
+        // visible response here instead of returning an empty projection.
+        return visibleAssistantText(message) ? originalRender.call(this, width) : [];
       }
       thinkingComponents.set(key, this);
       if (!activityFallbackThemes.has(group.id)) {
@@ -726,7 +730,8 @@ export default function prettyTui(pi: ExtensionAPI) {
       const key = assistantMessageKey(message);
       const member = activityTimeline.memberForThinking(key);
       const group = member ? activityTimeline.groupForMember(member.id) : undefined;
-      if (!member || !group || group.toolCallIds.length === 0) return undefined;
+      if (!member || !group) return undefined;
+      if (group.toolCallIds.length === 0) return originalHandleMouse.call(this, event);
       const position = activityMemberPosition(group, member);
       const isLeftClick = event.type === "click" && event.button === "left";
 
