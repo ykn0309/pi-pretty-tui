@@ -181,8 +181,9 @@ export default function prettyTui(pi: ExtensionAPI) {
   };
 
   const activityGroupTheme = (group: ActivityGroup): any => {
-    const cached = activityFallbackThemes.get(group.id);
-    if (cached) return cached;
+    // A Thought can render before its tools are constructed and install a
+    // Markdown fallback. Always promote a real tool theme once available so
+    // light mode receives explicit, high-contrast text colors.
     for (const toolCallId of group.toolCallIds) {
       const toolTheme = cleanToolThemes.get(toolCallId);
       if (toolTheme) {
@@ -190,6 +191,8 @@ export default function prettyTui(pi: ExtensionAPI) {
         return toolTheme;
       }
     }
+    const cached = activityFallbackThemes.get(group.id);
+    if (cached) return cached;
     const fallback = defaultActivityTheme();
     activityFallbackThemes.set(group.id, fallback);
     return fallback;
@@ -1402,10 +1405,24 @@ export default function prettyTui(pi: ExtensionAPI) {
     context.state.compactToolStatus = status;
   };
 
+  const foregroundLuminance = (styled: string): number | undefined => {
+    const trueColor = /\x1b\[38;2;(\d+);(\d+);(\d+)m/.exec(styled);
+    if (!trueColor) return undefined;
+    const [, red, green, blue] = trueColor.map(Number);
+    return red * 0.2126 + green * 0.7152 + blue * 0.0722;
+  };
+
+  const successMarkerColor = (theme: any): string => {
+    const textLuminance = foregroundLuminance(theme.fg("text", "M"));
+    return textLuminance !== undefined && textLuminance < 128
+      ? "success"
+      : "syntaxComment";
+  };
+
   const callRow = (theme: any, name: string, detail: string, state: any): DisplayRow => ({
     prefix: () => {
       const status = (state.compactToolStatus ?? "running") as ToolStatus;
-      const color = status === "success" ? "syntaxComment" : status === "error" ? "error" : "dim";
+      const color = status === "success" ? successMarkerColor(theme) : status === "error" ? "error" : "dim";
       return theme.fg(color, "● ");
     },
     continuation: "  ",
@@ -1675,7 +1692,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     const dotColor = component.result?.isError
       ? "error"
       : component.result && !component.isPartial
-        ? "syntaxComment"
+        ? successMarkerColor(theme)
         : "accent";
     const title = theme.fg(dotColor, "● ") +
       theme.fg("accent", theme.bold(label)) +
@@ -2125,7 +2142,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     prefix: () => {
       const currentActivity = typeof activity === "function" ? activity() : activity;
       const color = currentActivity === "done"
-        ? collapsedDone ? "thinkingText" : "syntaxComment"
+        ? collapsedDone ? "thinkingText" : successMarkerColor(theme)
         : "accent";
       return theme.fg(color, "● ");
     },
@@ -2134,7 +2151,7 @@ export default function prettyTui(pi: ExtensionAPI) {
       const currentActivity = typeof activity === "function" ? activity() : activity;
       const label = currentActivity === "done" ? "Done" : "Running";
       const color = label === "Done"
-        ? collapsedDone ? "thinkingText" : "syntaxComment"
+        ? collapsedDone ? "thinkingText" : successMarkerColor(theme)
         : "accent";
       const detailColor = label === "Done" && collapsedDone ? "thinkingText" : "text";
       return theme.fg(color, theme.bold(label)) +
