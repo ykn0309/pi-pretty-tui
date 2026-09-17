@@ -379,6 +379,9 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
   ]));
   const firstComponent = new AssistantMessageComponent(first.message);
   const mixedComponent = new AssistantMessageComponent(mixed.message);
+  const collapsedMixed = mixedComponent.render(80).join("\n")
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
+  assert.ok(collapsedMixed.includes("Visible final answer"));
   firstComponent.handleMouse({
     type: "click", button: "left", x: 1, y: 1, width: 80, height: firstComponent.render(80).length,
   });
@@ -424,6 +427,26 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
   const noToolMixedText = noToolMixedComponent.render(80).join("\n")
     .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
   assert.ok(noToolMixedText.includes("Visible answer without tool calls"));
+}
+
+// If a transcript rebuild resets timeline ownership before an older assistant
+// component is discarded, visible text must fail open instead of disappearing.
+{
+  const rebuildingMixed = {
+    role: "assistant",
+    timestamp: 26_000,
+    stopReason: "stop",
+    content: [
+      { type: "thinking", thinking: "Survive timeline reset" },
+      { type: "text", text: "Visible answer during rebuild" },
+    ],
+  };
+  await emit("session_start", {}, sessionContext([]));
+  const rebuildingComponent = new AssistantMessageComponent(rebuildingMixed);
+  await emit("session_start", {}, sessionContext([]));
+  const rebuildingText = rebuildingComponent.render(80).join("\n")
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
+  assert.ok(rebuildingText.includes("Visible answer during rebuild"));
 }
 
 // Persisted custom_message entries restore as ordered activity updates instead

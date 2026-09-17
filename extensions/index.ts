@@ -625,7 +625,12 @@ export default function prettyTui(pi: ExtensionAPI) {
       const key = assistantMessageKey(message);
       const member = activityTimeline.memberForThinking(key);
       const group = member ? activityTimeline.groupForMember(member.id) : undefined;
-      if (!member || !group) return [];
+      if (!member || !group) {
+        // Timeline ownership can be briefly unavailable during transcript
+        // rebuilds. Fail open to Pi's filtered native renderer so visible
+        // assistant text is never lost.
+        return originalRender.call(this, width);
+      }
       if (group.toolCallIds.length === 0) {
         // Activity groups are tool-oriented. A model may finish with Thinking
         // and visible text without calling a tool; only the Thinking portion
@@ -730,7 +735,7 @@ export default function prettyTui(pi: ExtensionAPI) {
       const key = assistantMessageKey(message);
       const member = activityTimeline.memberForThinking(key);
       const group = member ? activityTimeline.groupForMember(member.id) : undefined;
-      if (!member || !group) return undefined;
+      if (!member || !group) return originalHandleMouse.call(this, event);
       if (group.toolCallIds.length === 0) return originalHandleMouse.call(this, event);
       const position = activityMemberPosition(group, member);
       const isLeftClick = event.type === "click" && event.button === "left";
