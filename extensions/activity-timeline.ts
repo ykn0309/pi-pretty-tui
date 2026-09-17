@@ -118,10 +118,20 @@ export class ActivityTimeline {
     content: string,
     persistent: boolean,
   ): ActivityMember | undefined {
+    if (!this.currentGroupId) return undefined;
+    return this.addUpdateToGroup(this.currentGroupId, updateKey, title, content, persistent);
+  }
+
+  addUpdateToGroup(
+    groupId: string,
+    updateKey: string,
+    title: string,
+    content: string,
+    persistent: boolean,
+  ): ActivityMember | undefined {
     const existingId = this.updateMembers.get(updateKey);
     if (existingId) return this.member(existingId);
-    if (!this.currentGroupId) return undefined;
-    const group = this.groupsById.get(this.currentGroupId);
+    const group = this.groupsById.get(groupId);
     if (!group || group.toolCallIds.length === 0) return undefined;
     const member: ActivityMember = {
       id: updateMemberId(updateKey),

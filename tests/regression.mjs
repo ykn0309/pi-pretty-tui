@@ -340,6 +340,56 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
   assert.deepEqual(nativeInfo, ["Standalone info"]);
 }
 
+// Persisted custom_message entries restore as ordered activity updates instead
+// of falling back to Pi's purple CustomMessage box.
+{
+  const call = assistant("40", null, [{ id: "restored-custom-tool", name: "obs_recall" }]);
+  const customEntry = {
+    type: "custom_message",
+    id: "42",
+    parentId: "41",
+    timestamp: "2026-01-01T00:01:12.000Z",
+    customType: "web-search-content-ready",
+    content: "Content fetched for 1/2 URLs",
+    display: true,
+  };
+  const restoredEntries = [
+    call,
+    result("41", "40", "restored-custom-tool"),
+    customEntry,
+  ];
+  await emit("session_start", {}, sessionContext(restoredEntries.slice(0, 2)));
+  try {
+    InteractiveMode.prototype.renderSessionEntries.call({ ui: { mode: "fullscreen" } }, restoredEntries);
+  } catch {}
+  const restoredTool = new ToolExecutionComponent(
+    "obs_recall",
+    "restored-custom-tool",
+    {},
+    undefined,
+    { renderShell: "self", renderCall: () => new Text("recall", 0, 0) },
+    { requestRender() {} },
+    process.cwd(),
+  );
+  const restoredCustomMessage = {
+    role: "custom",
+    timestamp: customEntry.timestamp,
+    customType: customEntry.customType,
+    content: customEntry.content,
+    display: true,
+  };
+  const restoredCustom = new CustomMessageComponent(restoredCustomMessage);
+  assert.equal(restoredCustom.render(80).length, 0);
+  const restoredParent = restoredTool.render(80);
+  restoredTool.handleMouse({
+    type: "click", button: "left", x: 1, y: 1, width: 80, height: restoredParent.length,
+  });
+  const restoredCustomText = restoredCustom.render(80).join("\n")
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
+  assert.ok(restoredCustomText.includes("Web Search Content Ready"));
+  assert.ok(restoredCustomText.includes("Content fetched for 1/2 URLs"));
+}
+
 // Third-party tools use their native renderer inside the same clean hierarchy,
 // and thinking is a compact sibling that can be expanded independently.
 {
@@ -469,6 +519,13 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
   assert.ok(expandedToolText.includes("│") && expandedToolText.includes("Third-party call"));
   assert.ok(expandedTool.includes("Money saved · Third-party result"));
   assert.ok(!/\x1b\[(?:4[0-9]|10[0-7]|48(?:;|:))/u.test(expandedTool));
+  toolComponent.handleMouse({
+    type: "click", button: "left", x: 8, y: 1, width: 80, height: toolComponent.render(80).length,
+  });
+  const reCollapsedTool = toolComponent.render(80).join("\n")
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
+  assert.ok(reCollapsedTool.includes("● Recall Observation"));
+  assert.ok(!reCollapsedTool.includes("Third-party call"));
 
   const compactLines = thinkingComponent.render(80);
   thinkingComponent.handleMouse({
