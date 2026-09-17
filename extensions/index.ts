@@ -613,9 +613,9 @@ export default function prettyTui(pi: ExtensionAPI) {
         };
         const headingStyle = (text: string) => this.theme.heading(text);
         const titleStyle =
-          level === 1 || level === 3
+          level === 1 || level === 2 || level === 3
             ? (text: string) => headingStyle(this.theme.bold(this.theme.underline(text)))
-            : level === 2 || level === 4
+            : level === 4
               ? (text: string) => headingStyle(this.theme.bold(text))
               : level === 5
                 ? headingStyle
@@ -626,7 +626,27 @@ export default function prettyTui(pi: ExtensionAPI) {
         };
         const title = this.renderInlineTokens(token.tokens || [], titleContext);
 
-        if (level <= 2) {
+        if (level === 1 && maxWidth >= 6) {
+          const maximumInnerWidth = maxWidth - 4;
+          const titleLines = wrapTextWithAnsi(title, Math.max(1, maximumInnerWidth));
+          const innerWidth = Math.max(
+            1,
+            ...titleLines.map((line: string) => visibleWidth(line)),
+          );
+          const frameWidth = Math.min(maxWidth, innerWidth + 4);
+          const frameStyle = (text: string) => headingStyle(this.theme.bold(text));
+          const lines = [
+            frameStyle(`╔${"═".repeat(frameWidth - 2)}╗`),
+            ...titleLines.map((line: string) => {
+              const padding = " ".repeat(Math.max(0, innerWidth - visibleWidth(line)));
+              return frameStyle("║ ") + line + frameStyle(`${padding} ║`);
+            }),
+            frameStyle(`╚${"═".repeat(frameWidth - 2)}╝`),
+          ];
+          return addHeadingSpacing(lines);
+        }
+
+        if (level === 2) {
           // Reverse only the rendered title cells: the theme's heading color
           // becomes a compact, content-width background label with no frame.
           const lines = wrapTextWithAnsi(title, maxWidth).map(
