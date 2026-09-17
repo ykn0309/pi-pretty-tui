@@ -240,8 +240,8 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
   }, { get: (target, key) => target[key] ?? ((text) => text) });
 
   const headingCases = [
-    ["# One", ["╔═════╗", "║ One ║", "╚═════╝"]],
-    ["## Two", ["╭─────╮", "│ Two │", "╰─────╯"]],
+    ["# One", ["One"]],
+    ["## Two", ["Two"]],
     ["### Three", ["Three"]],
     ["#### Four", ["Four"]],
     ["##### Five", ["┄┄ Five ┄┄"]],
@@ -255,8 +255,10 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
     assert.deepEqual(unstyled, expected);
     assert.ok(rendered.every((line) => visibleWidth(line) <= 20));
   }
-  const transparentHeading = new Markdown("# Transparent", 0, 0, markdownTheme).render(20);
-  assert.ok(transparentHeading.every((line) => !line.includes("\x1b[7m")));
+  const primaryHeading = new Markdown("# Primary", 0, 0, markdownTheme).render(20);
+  const secondaryHeading = new Markdown("## Secondary", 0, 0, markdownTheme).render(20);
+  assert.ok(primaryHeading[0].includes("\x1b[7m") && primaryHeading[0].includes("\x1b[4m"));
+  assert.ok(secondaryHeading[0].includes("\x1b[7m") && !secondaryHeading[0].includes("\x1b[4m"));
   const narrowHeading = new Markdown("# Narrow heading", 0, 0, markdownTheme).render(5);
   assert.ok(narrowHeading.every((line) => visibleWidth(line) <= 5));
 

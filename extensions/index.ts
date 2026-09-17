@@ -626,30 +626,12 @@ export default function prettyTui(pi: ExtensionAPI) {
         };
         const title = this.renderInlineTokens(token.tokens || [], titleContext);
 
-        if (level <= 2 && maxWidth >= 6) {
-          const heavy = level === 1;
-          const horizontal = heavy ? "═" : "─";
-          const vertical = heavy ? "║" : "│";
-          const topLeft = heavy ? "╔" : "╭";
-          const topRight = heavy ? "╗" : "╮";
-          const bottomLeft = heavy ? "╚" : "╰";
-          const bottomRight = heavy ? "╝" : "╯";
-          const maximumInnerWidth = maxWidth - 4;
-          const titleLines = wrapTextWithAnsi(title, Math.max(1, maximumInnerWidth));
-          const innerWidth = Math.max(
-            1,
-            ...titleLines.map((line: string) => visibleWidth(line)),
+        if (level <= 2) {
+          // Reverse only the rendered title cells: the theme's heading color
+          // becomes a compact, content-width background label with no frame.
+          const lines = wrapTextWithAnsi(title, maxWidth).map(
+            (line: string) => `\x1b[7m${line}\x1b[27m`,
           );
-          const frameWidth = Math.min(maxWidth, innerWidth + 4);
-          const frameStyle = (text: string) => headingStyle(this.theme.bold(text));
-          const lines = [
-            frameStyle(`${topLeft}${horizontal.repeat(frameWidth - 2)}${topRight}`),
-            ...titleLines.map((line: string) => {
-              const padding = " ".repeat(Math.max(0, innerWidth - visibleWidth(line)));
-              return frameStyle(`${vertical} `) + line + frameStyle(`${padding} ${vertical}`);
-            }),
-            frameStyle(`${bottomLeft}${horizontal.repeat(frameWidth - 2)}${bottomRight}`),
-          ];
           return addHeadingSpacing(lines);
         }
 
