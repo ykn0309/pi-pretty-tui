@@ -1730,7 +1730,7 @@ export default function prettyTui(pi: ExtensionAPI) {
       toolCallId,
       name,
       until: startedAt + CLEAN_TOOL_ACTIVITY_MIN_MS,
-      after: "thinking...",
+      after: "Thinking",
       started,
     });
     cleanRun.activeToolName = name;
@@ -1745,14 +1745,14 @@ export default function prettyTui(pi: ExtensionAPI) {
         toolCallId,
         name,
         until: now + CLEAN_TOOL_ACTIVITY_MIN_MS,
-        after: "thinking...",
+        after: "Thinking",
         started: true,
       };
       toolActivityHolds.set(toolCallId, hold);
     }
     hold.name = name;
     hold.started = true;
-    hold.after = "thinking...";
+    hold.after = "Thinking";
     scheduleToolActivityRelease(hold);
   };
 
@@ -1771,13 +1771,13 @@ export default function prettyTui(pi: ExtensionAPI) {
 
   const currentCleanActivity = (): string => {
     if (cleanRun.activeToolCallId) {
-      return cleanRun.activeToolName ?? cleanRun.activity ?? "thinking...";
+      return cleanRun.activeToolName ?? cleanRun.activity ?? "Thinking";
     }
     if (cleanRun.lastCompletedToolCallId) {
       const hold = toolActivityHolds.get(cleanRun.lastCompletedToolCallId);
       if (hold) return heldActivity(hold);
     }
-    return cleanRun.activeToolName ?? cleanRun.activity ?? (cleanRun.active ? "thinking..." : "done");
+    return cleanRun.activeToolName ?? cleanRun.activity ?? (cleanRun.active ? "Thinking" : "done");
   };
 
   pi.on("session_shutdown", clearToolActivityHolds);
@@ -2119,7 +2119,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     prefix: () => {
       const currentActivity = typeof activity === "function" ? activity() : activity;
       const color = currentActivity === "done"
-        ? collapsedDone ? "thinkingText" : "success"
+        ? collapsedDone ? "thinkingText" : "syntaxComment"
         : "accent";
       return theme.fg(color, "● ");
     },
@@ -2128,7 +2128,7 @@ export default function prettyTui(pi: ExtensionAPI) {
       const currentActivity = typeof activity === "function" ? activity() : activity;
       const label = currentActivity === "done" ? "Done" : "Running";
       const color = label === "Done"
-        ? collapsedDone ? "thinkingText" : "success"
+        ? collapsedDone ? "thinkingText" : "syntaxComment"
         : "accent";
       const detailColor = label === "Done" && collapsedDone ? "thinkingText" : "text";
       return theme.fg(color, theme.bold(label)) +
@@ -2618,7 +2618,7 @@ export default function prettyTui(pi: ExtensionAPI) {
   pi.on("session_before_compact", () => {
     // Pi emits this for manual, threshold, and overflow-recovery compaction.
     // Seal the activity group before the compaction indicator is rendered so
-    // completed work never remains labelled Running(... · thinking...). A
+    // completed work never remains labelled Running(... · Thinking). A
     // lifecycle boundary overrides the minimum per-tool activity hold.
     clearToolActivityHolds();
     finishCleanGroup("done");
@@ -2763,7 +2763,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     cleanRun.activeToolCallIds.clear();
     cleanRun.activeToolCallId = undefined;
     cleanRun.activeToolName = undefined;
-    cleanRun.activity = "thinking...";
+    cleanRun.activity = "Thinking";
   });
   pi.on("tool_execution_start", (event) => {
     activityTimeline.addTool(event.toolCallId, event.toolName);
@@ -2795,7 +2795,7 @@ export default function prettyTui(pi: ExtensionAPI) {
       cleanRun.activeToolName = cleanRun.activeToolCallId
         ? cleanToolNames.get(cleanRun.activeToolCallId)
         : undefined;
-      cleanRun.activity = cleanRun.activeToolName ?? "thinking...";
+      cleanRun.activity = cleanRun.activeToolName ?? "Thinking";
     }
     const visibleSummaryToolCallId = cleanRun.activeToolCallId ?? cleanRun.lastCompletedToolCallId;
     setCleanGroupMembers(visibleSummaryToolCallId, cleanRun.currentToolCallIds.slice());
@@ -2807,7 +2807,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     cleanRun.activeToolCallIds.clear();
     cleanRun.activeToolCallId = undefined;
     cleanRun.activeToolName = undefined;
-    cleanRun.activity = "thinking...";
+    cleanRun.activity = "Thinking";
   });
   pi.on("agent_settled", () => {
     if (cleanRun.settled) return;
