@@ -98,6 +98,7 @@ export default function prettyTui(pi: ExtensionAPI) {
   const expandedThinkingMembers = new Set<string>();
   const thinkingComponents = new Map<string, any>();
   const activityFallbackThemes = new Map<string, any>();
+  const activityNoticeRegions = new Map<string, { start: number; end: number }>();
   const assistantBoundaryKeys = new Set<string>();
   const cleanCompactToolCallIds = new Set<string>();
   const cleanGroupToolCallIds = new Map<string, string[]>();
@@ -217,6 +218,36 @@ export default function prettyTui(pi: ExtensionAPI) {
       childWidth: Math.max(1, width - prefixWidth),
       prefixWidth,
     };
+  };
+
+  const appendActivityNotices = (
+    group: ActivityGroup,
+    member: ActivityMember,
+    width: number,
+    theme: any,
+    lines: string[],
+    force = false,
+  ): string[] => {
+    if ((!force && group.members[group.members.length - 1]?.id !== member.id) || group.notices.length === 0) {
+      activityNoticeRegions.delete(member.id);
+      return lines;
+    }
+    const padding = width > 1 ? " " : "";
+    const contentWidth = Math.max(1, width - visibleWidth(padding));
+    const noticeLines = group.notices.flatMap((notice) => [
+      "",
+      ...wrapTextWithAnsi(theme.fg("dim", notice.message), contentWidth).map((line) =>
+        truncateToWidth(`${padding}${line}`, Math.max(1, width), "")
+      ),
+    ]);
+    const start = lines.length + 1;
+    activityNoticeRegions.set(member.id, { start, end: start + noticeLines.length - 1 });
+    return [...lines, ...noticeLines];
+  };
+
+  const eventHitsActivityNotice = (member: ActivityMember, event: any): boolean => {
+    const region = activityNoticeRegions.get(member.id);
+    return Boolean(region && event.y >= region.start && event.y <= region.end);
   };
 
   const saveRenderMode = (mode: PrettyTuiMode) => {
@@ -524,7 +555,14 @@ export default function prettyTui(pi: ExtensionAPI) {
       const revealed = activityGroupRevealed(group);
       if (!revealed) {
         return position.first
-          ? ["", ...renderActivityGroupSummary(group, width, true)]
+          ? appendActivityNotices(
+              group,
+              member,
+              width,
+              activityGroupTheme(group),
+              ["", ...renderActivityGroupSummary(group, width, true)],
+              true,
+            )
           : [];
       }
 
@@ -547,6 +585,7 @@ export default function prettyTui(pi: ExtensionAPI) {
         cached?.message === message &&
         cached?.theme === groupTheme &&
         cached?.memberCount === group.members.length &&
+        cached?.noticeCount === group.notices.length &&
         cached?.last === position.last
       ) {
         return cached.lines;
@@ -564,15 +603,23 @@ export default function prettyTui(pi: ExtensionAPI) {
       const decorated = contentLines.map((line, index) =>
         truncateToWidth((index === 0 ? prefix : continuation) + line, Math.max(1, width), "")
       );
-      const output = position.first
+      const memberOutput = position.first
         ? ["", ...renderActivityGroupSummary(group, width), ...decorated]
         : decorated;
+      const output = appendActivityNotices(
+        group,
+        member,
+        width,
+        groupTheme,
+        memberOutput,
+      );
       if (cacheable) {
         this[cleanThinkingRenderCacheKey] = {
           width,
           message,
           theme: groupTheme,
           memberCount: group.members.length,
+          noticeCount: group.notices.length,
           last: position.last,
           lines: output,
         };
@@ -591,6 +638,7 @@ export default function prettyTui(pi: ExtensionAPI) {
       if (!member || !group || group.toolCallIds.length === 0) return undefined;
       const position = activityMemberPosition(group, member);
       const isLeftClick = event.type === "click" && event.button === "left";
+      if (eventHitsActivityNotice(member, event)) return undefined;
       if (!activityGroupRevealed(group)) {
         if (!isLeftClick) return undefined;
         if (position.first) {
@@ -687,6 +735,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     const originalSetToolsExpanded = interactiveModePrototype.setToolsExpanded;
     const originalRenderSessionEntries = interactiveModePrototype.renderSessionEntries;
     const originalSwitchTuiMode = interactiveModePrototype.switchTuiMode;
+    const originalShowExtensionNotify = interactiveModePrototype.showExtensionNotify;
     const patchedSetToolsExpanded = function (this: any, expanded: boolean) {
       cleanToolsExpanded = expanded;
       changingAllToolsExpansion = true;
@@ -724,6 +773,22 @@ export default function prettyTui(pi: ExtensionAPI) {
       return result;
     };
 
+    const patchedShowExtensionNotify = function (
+      this: any,
+      message: string,
+      type?: "info" | "warning" | "error",
+    ) {
+      if (renderMode !== "clean" || (type !== undefined && type !== "info")) {
+        return originalShowExtensionNotify.call(this, message, type);
+      }
+      const notice = activityTimeline.addNotice(message);
+      const group = notice ? activityTimeline.currentGroup() : undefined;
+      if (!notice || !group) {
+        return originalShowExtensionNotify.call(this, message, type);
+      }
+      this.ui?.requestRender?.();
+    };
+
     interactiveModePrototype[toolsExpansionPatchKey] = {
       originalSetToolsExpanded,
       patchedSetToolsExpanded,
@@ -731,10 +796,13 @@ export default function prettyTui(pi: ExtensionAPI) {
       patchedRenderSessionEntries,
       originalSwitchTuiMode,
       patchedSwitchTuiMode,
+      originalShowExtensionNotify,
+      patchedShowExtensionNotify,
     };
     interactiveModePrototype.setToolsExpanded = patchedSetToolsExpanded;
     interactiveModePrototype.renderSessionEntries = patchedRenderSessionEntries;
     interactiveModePrototype.switchTuiMode = patchedSwitchTuiMode;
+    interactiveModePrototype.showExtensionNotify = patchedShowExtensionNotify;
 
     pi.on("session_shutdown", () => {
       fullscreenTui = false;
@@ -751,10 +819,14 @@ export default function prettyTui(pi: ExtensionAPI) {
       if (patch.patchedSwitchTuiMode === interactiveModePrototype.switchTuiMode) {
         interactiveModePrototype.switchTuiMode = patch.originalSwitchTuiMode;
       }
+      if (patch.patchedShowExtensionNotify === interactiveModePrototype.showExtensionNotify) {
+        interactiveModePrototype.showExtensionNotify = patch.originalShowExtensionNotify;
+      }
       if (
         interactiveModePrototype.setToolsExpanded === patch.originalSetToolsExpanded &&
         interactiveModePrototype.renderSessionEntries === patch.originalRenderSessionEntries &&
-        interactiveModePrototype.switchTuiMode === patch.originalSwitchTuiMode
+        interactiveModePrototype.switchTuiMode === patch.originalSwitchTuiMode &&
+        interactiveModePrototype.showExtensionNotify === patch.originalShowExtensionNotify
       ) {
         delete interactiveModePrototype[toolsExpansionPatchKey];
       }
@@ -1658,7 +1730,14 @@ export default function prettyTui(pi: ExtensionAPI) {
       const position = activityMemberPosition(group, member);
       if (!activityGroupRevealed(group)) {
         return position.first
-          ? ["", ...renderActivityGroupSummary(group, width, true)]
+          ? appendActivityNotices(
+              group,
+              member,
+              width,
+              activityGroupTheme(group),
+              ["", ...renderActivityGroupSummary(group, width, true)],
+              true,
+            )
           : [];
       }
 
@@ -1716,8 +1795,10 @@ export default function prettyTui(pi: ExtensionAPI) {
           };
         }
       }
-      if (!position.first) return decoratedContent;
-      return ["", ...renderActivityGroupSummary(group, width), ...decoratedContent];
+      const memberOutput = position.first
+        ? ["", ...renderActivityGroupSummary(group, width), ...decoratedContent]
+        : decoratedContent;
+      return appendActivityNotices(group, member, width, childTheme, memberOutput);
     };
     const patchedToolHandleMouse = function (this: any, event: any) {
       const member = activityTimeline.memberForTool(this.toolCallId);
@@ -1728,6 +1809,7 @@ export default function prettyTui(pi: ExtensionAPI) {
       }
       const position = activityMemberPosition(group, member);
       const revealed = activityGroupRevealed(group);
+      if (eventHitsActivityNotice(member, event)) return undefined;
 
       if (!revealed && position.first && isLeftClick) {
         revealCleanGroup(group, this.ui);
@@ -2115,6 +2197,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     expandedThinkingMembers.clear();
     thinkingComponents.clear();
     activityFallbackThemes.clear();
+    activityNoticeRegions.clear();
     assistantBoundaryKeys.clear();
     knownToolCallIds.clear();
     cleanCompactToolCallIds.clear();

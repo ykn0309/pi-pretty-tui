@@ -9,11 +9,17 @@ export type ActivityMember = {
   thinking?: string;
 };
 
+export type ActivityNotice = {
+  id: string;
+  message: string;
+};
+
 export type ActivityGroup = {
   id: string;
   members: ActivityMember[];
   toolCallIds: string[];
   thoughtCount: number;
+  notices: ActivityNotice[];
 };
 
 const toolMemberId = (toolCallId: string) => `tool:${toolCallId}`;
@@ -31,6 +37,7 @@ export class ActivityTimeline {
   private thinkingMembers = new Map<string, string>();
   private currentGroupId?: string;
   private sequence = 0;
+  private noticeSequence = 0;
 
   clear(): void {
     this.groupsById.clear();
@@ -40,19 +47,26 @@ export class ActivityTimeline {
     this.thinkingMembers.clear();
     this.currentGroupId = undefined;
     this.sequence = 0;
+    this.noticeSequence = 0;
   }
 
   boundary(): void {
     this.currentGroupId = undefined;
   }
 
-  private currentGroup(): ActivityGroup {
+  private ensureCurrentGroup(): ActivityGroup {
     if (this.currentGroupId) {
       const current = this.groupsById.get(this.currentGroupId);
       if (current) return current;
     }
     const id = `activity:${++this.sequence}`;
-    const group: ActivityGroup = { id, members: [], toolCallIds: [], thoughtCount: 0 };
+    const group: ActivityGroup = {
+      id,
+      members: [],
+      toolCallIds: [],
+      thoughtCount: 0,
+      notices: [],
+    };
     this.groupsById.set(id, group);
     this.currentGroupId = id;
     return group;
@@ -67,7 +81,7 @@ export class ActivityTimeline {
       toolCallId,
       toolName,
     };
-    const group = this.currentGroup();
+    const group = this.ensureCurrentGroup();
     group.members.push(member);
     group.toolCallIds.push(toolCallId);
     this.membersById.set(member.id, member);
@@ -91,13 +105,27 @@ export class ActivityTimeline {
       messageKey,
       thinking: normalized,
     };
-    const group = this.currentGroup();
+    const group = this.ensureCurrentGroup();
     group.members.push(member);
     group.thoughtCount += 1;
     this.membersById.set(member.id, member);
     this.memberGroups.set(member.id, group.id);
     this.thinkingMembers.set(messageKey, member.id);
     return member;
+  }
+
+  addNotice(message: string): ActivityNotice | undefined {
+    const normalized = message.trim();
+    if (!normalized || !this.currentGroupId) return undefined;
+    const group = this.groupsById.get(this.currentGroupId);
+    if (!group || group.toolCallIds.length === 0) return undefined;
+    const notice = { id: `notice:${++this.noticeSequence}`, message: normalized };
+    group.notices.push(notice);
+    return notice;
+  }
+
+  currentGroup(): ActivityGroup | undefined {
+    return this.currentGroupId ? this.groupsById.get(this.currentGroupId) : undefined;
   }
 
   groups(): ActivityGroup[] {

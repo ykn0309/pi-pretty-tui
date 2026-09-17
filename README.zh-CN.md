@@ -26,6 +26,8 @@ Pi 可能会提示内置工具被覆盖。这是正常现象：pi-pretty-tui 会
 
 点击 `Running(...)` 或 `Done(...)` 行，可以保留父级并展开其下方的工具和灰色 `● Thinking` 条目。点击单个工具或思考子项可切换完整视图，再次点击父级可折叠整个分组。任何时候都可以按 `Ctrl+O`，使用 Pi 的全局展开控制来显示或隐藏全部工具输出和思考内容。
 
+活动组执行期间产生的扩展 info 通知会作为无缩进尾注显示在完整分组下方，既保持可见，也不会打断树形工具列表。warning 和 error 仍使用 Pi 原生的即时展示方式。
+
 ## 渲染模式
 
 扩展支持三种可持久化的渲染模式：`clean`（默认）、`compact` 和 `full`。运行 `/pretty-tui` 可交互选择，也可以直接使用 `/pretty-tui clean`、`/pretty-tui compact`、`/pretty-tui full` 和 `/pretty-tui status`。所选设置会保存到 `~/.pi/agent/pretty-tui.json`，或 `PI_CODING_AGENT_DIR` 指定目录中的对应位置。

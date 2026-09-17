@@ -135,6 +135,8 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
   assert.deepEqual(timeline.groups().map((group) => group.thoughtCount), [1, 1]);
   timeline.addThinking("m2", "Updated streaming thought");
   assert.equal(timeline.groups()[1].thoughtCount, 1);
+  timeline.addNotice("Extension info");
+  assert.deepEqual(timeline.groups()[1].notices.map((notice) => notice.message), ["Extension info"]);
   assert.equal(assistantSystemBoundary({ role: "assistant", stopReason: "error", content: [] }), true);
   assert.equal(assistantSystemBoundary({ role: "assistant", stopReason: "toolUse", content: [] }), false);
 }
@@ -323,6 +325,17 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
   );
 }
 
+// Info notifications without a valid activity group fail open to Pi's native
+// notification path instead of being dropped.
+{
+  await emit("session_start", {}, sessionContext([]));
+  const nativeInfo = [];
+  InteractiveMode.prototype.showExtensionNotify.call({
+    showStatus(message) { nativeInfo.push(message); },
+  }, "Standalone info", "info");
+  assert.deepEqual(nativeInfo, ["Standalone info"]);
+}
+
 // Third-party tools use their native renderer inside the same clean hierarchy,
 // and thinking is a compact sibling that can be expanded independently.
 {
@@ -379,12 +392,29 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
   );
   toolComponent.markExecutionStarted();
   toolComponent.updateResult({ content: [{ type: "text", text: "ok" }], isError: false });
+  const nativeNotifications = [];
+  const notifyHost = {
+    ui,
+    showStatus(message) { nativeNotifications.push(["info", message]); },
+    showWarning(message) { nativeNotifications.push(["warning", message]); },
+    showError(message) { nativeNotifications.push(["error", message]); },
+  };
+  InteractiveMode.prototype.showExtensionNotify.call(notifyHost, "Footer info", "info");
+  InteractiveMode.prototype.showExtensionNotify.call(notifyHost, "Default footer");
+  InteractiveMode.prototype.showExtensionNotify.call(notifyHost, "Keep warning native", "warning");
+  InteractiveMode.prototype.showExtensionNotify.call(notifyHost, "Keep error native", "error");
+  assert.deepEqual(nativeNotifications, [
+    ["warning", "Keep warning native"],
+    ["error", "Keep error native"],
+  ]);
 
   const collapsedThinking = thinkingComponent.render(80);
   const collapsedTool = toolComponent.render(80);
   const collapsedThinkingText = collapsedThinking.join("\n").replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
   assert.ok(collapsedThinkingText.includes("Running("));
   assert.ok(collapsedThinkingText.includes("1 thought"));
+  assert.ok(collapsedThinkingText.includes("Footer info"));
+  assert.ok(collapsedThinkingText.includes("Default footer"));
   assert.equal(collapsedTool.length, 0);
   const wheelEvent = {
     type: "scroll", direction: "up", x: 1, y: 1, width: 80, height: collapsedThinking.length,
@@ -401,6 +431,15 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
   assert.ok(!compactThinking.includes("Inspect compatibility"));
   assert.ok(compactTool.includes("└─") && compactTool.includes("● Recall Observation"));
   assert.ok(compactTool.includes("ok"));
+  assert.ok(compactTool.indexOf("ok") < compactTool.indexOf("Footer info"));
+  const noticeLine = toolComponent.render(80)
+    .map((line) => line.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, ""))
+    .findIndex((line) => line.includes("Footer info"));
+  assert.ok(noticeLine >= 0);
+  assert.equal(toolComponent.handleMouse({
+    type: "click", button: "left", x: 1, y: noticeLine + 1, width: 80, height: toolComponent.render(80).length,
+  }), undefined);
+  assert.equal(toolComponent.expanded, false);
   assert.ok(!compactTool.includes("Third-party call"));
   toolComponent.updateResult({ content: [{ type: "text", text: "updated result" }], isError: false });
   assert.ok(toolComponent.render(80).join("\n").includes("updated result"));
@@ -574,12 +613,14 @@ const patchedMarkdownRenderToken = Markdown.prototype.renderToken;
 const patchedAssistantRender = AssistantMessageComponent.prototype.render;
 const patchedAssistantMouse = AssistantMessageComponent.prototype.handleMouse;
 const patchedToolRender = ToolExecutionComponent.prototype.render;
+const patchedShowExtensionNotify = InteractiveMode.prototype.showExtensionNotify;
 await emit("session_shutdown");
 assert.equal(Markdown.prototype.handleMouse, undefined);
 assert.notEqual(Markdown.prototype.renderToken, patchedMarkdownRenderToken);
 assert.notEqual(AssistantMessageComponent.prototype.render, patchedAssistantRender);
 assert.notEqual(AssistantMessageComponent.prototype.handleMouse, patchedAssistantMouse);
 assert.notEqual(ToolExecutionComponent.prototype.render, patchedToolRender);
+assert.notEqual(InteractiveMode.prototype.showExtensionNotify, patchedShowExtensionNotify);
 assert.notEqual(TuiAltScreen.prototype.handleSelectionMouseEvent, patchedSelectionHandler);
 rmSync(agentDir, { recursive: true, force: true });
 console.log("Regression suite passed.");

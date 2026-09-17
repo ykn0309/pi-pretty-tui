@@ -26,6 +26,8 @@ Pi may warn that built-in tools are being overridden. This is expected: pi-prett
 
 Click a `Running(...)` or `Done(...)` row to keep it as a parent and reveal tools and muted `● Thinking` entries beneath it. Click an individual tool or thinking child to toggle its complete view, or click the parent again to collapse the whole group. Press `Ctrl+O` at any time to use Pi's global expansion control for all tool output and thinking content.
 
+Informational extension notifications emitted during an activity group are displayed as unindented footnotes below the complete group, so they stay visible without interrupting its tree. Warnings and errors retain Pi's native immediate presentation.
+
 ## Rendering modes
 
 The extension supports three persistent rendering modes: `clean` (default), `compact`, and `full`. Run `/pretty-tui` to choose one interactively, or use `/pretty-tui clean`, `/pretty-tui compact`, `/pretty-tui full`, and `/pretty-tui status` directly. The selection is stored in `~/.pi/agent/pretty-tui.json` or under the directory selected by `PI_CODING_AGENT_DIR`.
