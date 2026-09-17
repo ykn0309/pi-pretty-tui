@@ -125,10 +125,19 @@ export default function prettyTui(pi: ExtensionAPI) {
     const directTheme = cleanToolThemes.get(toolCallId);
     if (directTheme) return directTheme;
     const activityGroup = activityTimeline.groupForTool(toolCallId);
-    const activityTheme = activityGroup
-      ?.toolCallIds.map((id) => cleanToolThemes.get(id))
-      .find(Boolean);
-    if (activityTheme) return activityTheme;
+    const cachedActivityTheme = activityGroup
+      ? activityFallbackThemes.get(activityGroup.id)
+      : undefined;
+    if (cachedActivityTheme) return cachedActivityTheme;
+    if (activityGroup) {
+      for (const id of activityGroup.toolCallIds) {
+        const activityTheme = cleanToolThemes.get(id);
+        if (activityTheme) {
+          activityFallbackThemes.set(activityGroup.id, activityTheme);
+          return activityTheme;
+        }
+      }
+    }
     const legacyOwner = cleanToolCallGroupOwners.get(toolCallId);
     const legacyIds = legacyOwner ? cleanGroupToolCallIds.get(legacyOwner) : undefined;
     return legacyIds?.map((id) => cleanToolThemes.get(id)).find(Boolean);
@@ -165,22 +174,28 @@ export default function prettyTui(pi: ExtensionAPI) {
     };
   };
 
-  const activityGroupTheme = (group: ActivityGroup): any =>
-    group.toolCallIds.map((toolCallId) => cleanToolThemes.get(toolCallId)).find(Boolean) ??
-    activityFallbackThemes.get(group.id) ??
-    defaultActivityTheme();
+  const activityGroupTheme = (group: ActivityGroup): any => {
+    const cached = activityFallbackThemes.get(group.id);
+    if (cached) return cached;
+    for (const toolCallId of group.toolCallIds) {
+      const toolTheme = cleanToolThemes.get(toolCallId);
+      if (toolTheme) {
+        activityFallbackThemes.set(group.id, toolTheme);
+        return toolTheme;
+      }
+    }
+    const fallback = defaultActivityTheme();
+    activityFallbackThemes.set(group.id, fallback);
+    return fallback;
+  };
 
   const activityGroupRevealed = (group: ActivityGroup): boolean =>
     cleanToolsExpanded || revealedActivityGroups.has(group.id);
 
-  const activityMemberPosition = (group: ActivityGroup, member: ActivityMember) => {
-    const index = group.members.findIndex((candidate) => candidate.id === member.id);
-    return {
-      index,
-      first: index === 0,
-      last: index === group.members.length - 1,
-    };
-  };
+  const activityMemberPosition = (group: ActivityGroup, member: ActivityMember) => ({
+    first: group.members[0]?.id === member.id,
+    last: group.members[group.members.length - 1]?.id === member.id,
+  });
 
   const activityTreeStyle = (
     group: ActivityGroup,
@@ -420,7 +435,12 @@ export default function prettyTui(pi: ExtensionAPI) {
     const renderedExpansionKey = Symbol("pretty-tui.rendered-assistant-expansion");
 
     const eligibleThinking = (message: any) =>
-      Boolean(thinkingText(message)) &&
+      Array.isArray(message?.content) &&
+      message.content.some(
+        (item: any) => item?.type === "thinking" &&
+          typeof item.thinking === "string" &&
+          item.thinking.length > 0,
+      ) &&
       !visibleAssistantText(message) &&
       !assistantSystemBoundary(message);
 
@@ -486,17 +506,19 @@ export default function prettyTui(pi: ExtensionAPI) {
         return cleanToolsExpanded ? originalRender.call(this, width) : [];
       }
       thinkingComponents.set(key, this);
-      activityFallbackThemes.set(group.id, {
-        fg: (color: string, text: string) => {
-          if (color === "accent" || color === "success") return this.markdownTheme.heading(text);
-          if (color === "dim" || color === "muted" || color === "thinkingText") {
-            return this.markdownTheme.quote(text);
-          }
-          return text;
-        },
-        bold: (text: string) => this.markdownTheme.bold(text),
-        italic: (text: string) => this.markdownTheme.italic(text),
-      });
+      if (!activityFallbackThemes.has(group.id)) {
+        activityFallbackThemes.set(group.id, {
+          fg: (color: string, text: string) => {
+            if (color === "accent" || color === "success") return this.markdownTheme.heading(text);
+            if (color === "dim" || color === "muted" || color === "thinkingText") {
+              return this.markdownTheme.quote(text);
+            }
+            return text;
+          },
+          bold: (text: string) => this.markdownTheme.bold(text),
+          italic: (text: string) => this.markdownTheme.italic(text),
+        });
+      }
       const position = activityMemberPosition(group, member);
       if (!activityGroupRevealed(group)) {
         return position.first
@@ -1396,16 +1418,14 @@ export default function prettyTui(pi: ExtensionAPI) {
 
   const thirdPartyResultSummary = (component: any): string => {
     const detailsError = component.result?.details?.error;
-    const text = typeof detailsError === "string"
-      ? detailsError
-      : component.result?.content
-        ?.filter((item: any) => item?.type === "text" && typeof item.text === "string")
-        .map((item: any) => item.text)
-        .join("\n");
-    const firstLine = stripTerminalSequences(String(text ?? ""))
-      .split("\n")
-      .map((line) => line.trim())
-      .find(Boolean);
+    const firstText = component.result?.content?.find(
+      (item: any) => item?.type === "text" && typeof item.text === "string" && item.text.length > 0,
+    )?.text;
+    const text = String(typeof detailsError === "string" ? detailsError : firstText ?? "");
+    const boundedText = text.slice(0, 512);
+    const newline = boundedText.indexOf("\n");
+    const boundedFirstLine = boundedText.slice(0, newline < 0 ? boundedText.length : newline);
+    const firstLine = stripTerminalSequences(boundedFirstLine).trim();
     if (firstLine) return truncateToWidth(firstLine, 72, "…");
     if (component.result) return component.result.isError ? "Failed" : "Done";
     return component.executionStarted ? "Running…" : "Pending";
@@ -1900,6 +1920,8 @@ export default function prettyTui(pi: ExtensionAPI) {
   const cleanToolCall = (theme: any, name: string, toolCallId: string): Component => {
     knownToolCallIds.add(toolCallId);
     cleanToolThemes.set(toolCallId, theme);
+    const activityGroup = activityTimeline.groupForTool(toolCallId);
+    if (activityGroup) activityFallbackThemes.set(activityGroup.id, theme);
     return {
       render(width: number): string[] {
         if (renderMode !== "clean") return [];

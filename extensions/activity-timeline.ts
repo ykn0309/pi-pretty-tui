@@ -25,6 +25,7 @@ const thinkingMemberId = (messageKey: string) => `thinking:${messageKey}`;
  */
 export class ActivityTimeline {
   private groupsById = new Map<string, ActivityGroup>();
+  private membersById = new Map<string, ActivityMember>();
   private memberGroups = new Map<string, string>();
   private toolMembers = new Map<string, string>();
   private thinkingMembers = new Map<string, string>();
@@ -33,6 +34,7 @@ export class ActivityTimeline {
 
   clear(): void {
     this.groupsById.clear();
+    this.membersById.clear();
     this.memberGroups.clear();
     this.toolMembers.clear();
     this.thinkingMembers.clear();
@@ -68,6 +70,7 @@ export class ActivityTimeline {
     const group = this.currentGroup();
     group.members.push(member);
     group.toolCallIds.push(toolCallId);
+    this.membersById.set(member.id, member);
     this.memberGroups.set(member.id, group.id);
     this.toolMembers.set(toolCallId, member.id);
     return member;
@@ -91,6 +94,7 @@ export class ActivityTimeline {
     const group = this.currentGroup();
     group.members.push(member);
     group.thoughtCount += 1;
+    this.membersById.set(member.id, member);
     this.memberGroups.set(member.id, group.id);
     this.thinkingMembers.set(messageKey, member.id);
     return member;
@@ -105,8 +109,7 @@ export class ActivityTimeline {
   }
 
   member(memberId: string): ActivityMember | undefined {
-    const groupId = this.memberGroups.get(memberId);
-    return groupId ? this.groupsById.get(groupId)?.members.find((member) => member.id === memberId) : undefined;
+    return this.membersById.get(memberId);
   }
 
   groupForMember(memberId: string): ActivityGroup | undefined {
