@@ -2024,9 +2024,8 @@ export default function prettyTui(pi: ExtensionAPI) {
       // absent from an uncompacted branch.
       const missingGroups = groups.filter((group) => !knownToolCallIds.has(group.lastToolCallId));
       if (missingGroups.length === 0) return [];
-      // Persisted entries represent settled groups. Older versions could
-      // accidentally store the transient responding... activity, so always
-      // normalize their display to Done.
+      // Persisted entries represent settled groups, so always normalize their
+      // display to Done even when an older entry stored a transient activity.
       return block(missingGroups.map((group) =>
         summaryRow(theme, group.count, group.failed, group.thoughtCount ?? 0, "done", true)
       )).render(width);
@@ -2382,12 +2381,13 @@ export default function prettyTui(pi: ExtensionAPI) {
     settleLastCleanGroup();
   });
 
-  // A visible assistant response is the boundary between tool groups. Do
-  // this during streaming so a following tool call cannot inherit the prior
-  // summary, while message_end keeps the rule correct for non-streaming paths.
+  // A visible assistant response is the boundary between tool groups. Seal
+  // the prior group directly as Done; the response text already communicates
+  // current activity and does not need a duplicate response status.
   pi.on("message_update", (event) => {
     if (hasVisibleAssistantText(event.message)) {
-      closeAtAssistantBoundary(event.message, "responding...");
+      clearToolActivityHolds();
+      closeAtAssistantBoundary(event.message, "done");
       return;
     }
     if (assistantSystemBoundary(event.message)) {

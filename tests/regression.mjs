@@ -275,6 +275,35 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
   );
 }
 
+// Visible assistant text settles the prior group directly as Done; it never
+// leaves a stale Running(... · responding...) row behind.
+{
+  await emit("session_start", {}, sessionContext([]));
+  await emit("agent_start");
+  await emit("tool_execution_start", { toolName: "web_search", toolCallId: "before-response" });
+  await emit("tool_execution_end", { toolName: "web_search", toolCallId: "before-response", isError: false });
+  await emit("message_update", {
+    message: {
+      role: "assistant",
+      timestamp: 9876,
+      content: [{ type: "text", text: "Visible response" }],
+    },
+  });
+  const responseBoundaryComponent = new ToolExecutionComponent(
+    "web_search",
+    "before-response",
+    {},
+    undefined,
+    { renderShell: "self", renderCall: () => new Text("search", 0, 0) },
+    { requestRender() {} },
+    process.cwd(),
+  );
+  const responseBoundaryText = responseBoundaryComponent.render(80).join("\n")
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
+  assert.ok(responseBoundaryText.includes("Done(1 tool call)"));
+  assert.ok(!responseBoundaryText.includes("responding"));
+}
+
 // Assistant/system errors are hard boundaries and remain outside activity groups.
 {
   appendedEntries.length = 0;
