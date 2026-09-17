@@ -168,7 +168,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     return {
       fg: (color: string, text: string) => {
         if (color === "accent") return markdownTheme.listBullet(text);
-        if (color === "success") return markdownTheme.codeBlock(text);
+        if (color === "success" || color === "syntaxComment") return markdownTheme.codeBlock(text);
         if (color === "thinkingLow") return markdownTheme.link(text);
         if (color === "dim" || color === "muted" || color === "thinkingText") {
           return markdownTheme.quote(text);
@@ -1402,7 +1402,7 @@ export default function prettyTui(pi: ExtensionAPI) {
   const callRow = (theme: any, name: string, detail: string, state: any): DisplayRow => ({
     prefix: () => {
       const status = (state.compactToolStatus ?? "running") as ToolStatus;
-      const color = status === "success" ? "success" : status === "error" ? "error" : "dim";
+      const color = status === "success" ? "syntaxComment" : status === "error" ? "error" : "dim";
       return theme.fg(color, "● ");
     },
     continuation: "  ",
@@ -1672,7 +1672,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     const dotColor = component.result?.isError
       ? "error"
       : component.result && !component.isPartial
-        ? "success"
+        ? "syntaxComment"
         : "accent";
     const title = theme.fg(dotColor, "● ") +
       theme.fg("accent", theme.bold(label)) +
