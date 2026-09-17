@@ -240,7 +240,7 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
   }, { get: (target, key) => target[key] ?? ((text) => text) });
 
   const headingCases = [
-    ["# One", ["╭━━━━━╮", "┃ One ┃", "╰━━━━━╯"]],
+    ["# One", ["╔═════╗", "║ One ║", "╚═════╝"]],
     ["## Two", ["╭─────╮", "│ Two │", "╰─────╯"]],
     ["### Three", ["Three"]],
     ["#### Four", ["Four"]],
@@ -255,8 +255,8 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
     assert.deepEqual(unstyled, expected);
     assert.ok(rendered.every((line) => visibleWidth(line) <= 20));
   }
-  const filledHeading = new Markdown("# Filled", 0, 0, markdownTheme).render(20);
-  assert.ok(filledHeading.every((line) => line.includes("\x1b[7m") && line.includes("\x1b[27m")));
+  const transparentHeading = new Markdown("# Transparent", 0, 0, markdownTheme).render(20);
+  assert.ok(transparentHeading.every((line) => !line.includes("\x1b[7m")));
   const narrowHeading = new Markdown("# Narrow heading", 0, 0, markdownTheme).render(5);
   assert.ok(narrowHeading.every((line) => visibleWidth(line) <= 5));
 

@@ -628,8 +628,12 @@ export default function prettyTui(pi: ExtensionAPI) {
 
         if (level <= 2 && maxWidth >= 6) {
           const heavy = level === 1;
-          const horizontal = heavy ? "━" : "─";
-          const vertical = heavy ? "┃" : "│";
+          const horizontal = heavy ? "═" : "─";
+          const vertical = heavy ? "║" : "│";
+          const topLeft = heavy ? "╔" : "╭";
+          const topRight = heavy ? "╗" : "╮";
+          const bottomLeft = heavy ? "╚" : "╰";
+          const bottomRight = heavy ? "╝" : "╯";
           const maximumInnerWidth = maxWidth - 4;
           const titleLines = wrapTextWithAnsi(title, Math.max(1, maximumInnerWidth));
           const innerWidth = Math.max(
@@ -638,18 +642,13 @@ export default function prettyTui(pi: ExtensionAPI) {
           );
           const frameWidth = Math.min(maxWidth, innerWidth + 4);
           const frameStyle = (text: string) => headingStyle(this.theme.bold(text));
-          // Reverse video turns the theme's heading foreground into a matching,
-          // terminal-aware fill without hard-coding light or dark RGB values.
-          const fill = (text: string) => `\x1b[7m${text}\x1b[27m`;
           const lines = [
-            fill(frameStyle(`╭${horizontal.repeat(frameWidth - 2)}╮`)),
+            frameStyle(`${topLeft}${horizontal.repeat(frameWidth - 2)}${topRight}`),
             ...titleLines.map((line: string) => {
               const padding = " ".repeat(Math.max(0, innerWidth - visibleWidth(line)));
-              return fill(
-                frameStyle(`${vertical} `) + line + frameStyle(`${padding} ${vertical}`),
-              );
+              return frameStyle(`${vertical} `) + line + frameStyle(`${padding} ${vertical}`);
             }),
-            fill(frameStyle(`╰${horizontal.repeat(frameWidth - 2)}╯`)),
+            frameStyle(`${bottomLeft}${horizontal.repeat(frameWidth - 2)}${bottomRight}`),
           ];
           return addHeadingSpacing(lines);
         }
