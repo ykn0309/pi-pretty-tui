@@ -41,6 +41,26 @@ import {
 
 type PrettyTuiMode = "full" | "compact" | "clean";
 const CLEAN_TOOL_ACTIVITY_MIN_MS = 1000;
+const SPECIALIZED_TOOL_NAMES = new Set(["read", "bash", "edit", "write", "grep", "find", "ls"]);
+
+const stripAnsiBackgrounds = (value: string): string =>
+  value.replace(/\x1b\[([0-9:;]*)m/g, (sequence, raw: string) => {
+    const fields = raw === "" ? [0] : raw.split(";").map((field) => Number(field));
+    const kept: number[] = [];
+    for (let index = 0; index < fields.length; index++) {
+      const field = fields[index];
+      if ((field >= 40 && field <= 49) || (field >= 100 && field <= 107)) continue;
+      if (field === 48) {
+        const mode = fields[index + 1];
+        if (mode === 5) index += 2;
+        else if (mode === 2) index += 4;
+        continue;
+      }
+      kept.push(field);
+    }
+    if (raw.includes(":") && /(?:^|;)48:/u.test(raw)) return "";
+    return kept.length > 0 ? `\x1b[${kept.join(";")}m` : "";
+  });
 type PrettyTuiConfig = {
   mode?: PrettyTuiMode;
   /** Legacy location used by the first mode implementation. */
@@ -497,21 +517,10 @@ export default function prettyTui(pi: ExtensionAPI) {
         const nativeLines = originalRender.call(this, childWidth);
         contentLines = nativeLines[0] === "" ? nativeLines.slice(1) : nativeLines;
       } else {
-        const compact = (member.thinking ?? "")
-          .replace(/^\s*[#>*-]+\s*/gm, "")
-          .replace(/\s+/g, " ")
-          .trim();
-        const labelShellWidth = visibleWidth("Thinking()");
-        const label = childWidth <= labelShellWidth
-          ? truncateToWidth("Thinking", childWidth, "…")
-          : `Thinking(${truncateToWidth(
-              compact || "thinking",
-              childWidth - labelShellWidth,
-              "…",
-            )})`;
+        const label = truncateToWidth("● Thinking", childWidth, "…");
         contentLines = [groupTheme
-          ? groupTheme.fg("thinkingText", groupTheme.italic(label))
-          : this.markdownTheme.italic(label)];
+          ? groupTheme.fg("thinkingText", label)
+          : this.markdownTheme.quote(label)];
       }
       const decorated = contentLines.map((line, index) =>
         truncateToWidth((index === 0 ? prefix : continuation) + line, Math.max(1, width), "")
@@ -1304,6 +1313,7 @@ export default function prettyTui(pi: ExtensionAPI) {
   type ToolSummaryGroup = {
     count: number;
     failed: number;
+    thoughtCount?: number;
     lastToolCallId: string;
     toolCallIds?: string[];
     activity?: string;
@@ -1311,6 +1321,7 @@ export default function prettyTui(pi: ExtensionAPI) {
   type ToolSummaryData = {
     count?: number;
     failed?: number;
+    thoughtCount?: number;
     /** Identifies the last tool component for older single-group entries. */
     lastToolCallId?: string;
     /** All groups from a run, used to restore summaries after reload. */
@@ -1324,7 +1335,12 @@ export default function prettyTui(pi: ExtensionAPI) {
     started: boolean;
     timer?: ReturnType<typeof setTimeout>;
   };
-  const settledSummaries = new Map<string, { count: number; failed: number; activity: DisplayValue }>();
+  const settledSummaries = new Map<string, {
+    count: number;
+    failed: number;
+    thoughtCount: number;
+    activity: DisplayValue;
+  }>();
   const toolActivityHolds = new Map<string, ToolActivityHold>();
   const legacySummaryLastToolCallIds = new Map<string, string>();
   const knownToolCallIds = new Set<string>();
@@ -1354,6 +1370,58 @@ export default function prettyTui(pi: ExtensionAPI) {
 
   const toolDisplayName = (name: string): string =>
     name === "ls" ? "List" : name.charAt(0).toUpperCase() + name.slice(1);
+
+  const conciseThirdPartyArgs = (args: any): string => {
+    if (!args || typeof args !== "object" || Array.isArray(args)) return "";
+    const sensitive = /(?:token|secret|password|authorization|credential|api[_-]?key)/iu;
+    const preferred = ["path", "query", "url", "offset", "id"];
+    const entries = Object.entries(args)
+      .filter(([key, value]) => !sensitive.test(key) && ["string", "number", "boolean"].includes(typeof value))
+      .sort(([left], [right]) => {
+        const leftRank = preferred.indexOf(left);
+        const rightRank = preferred.indexOf(right);
+        return (leftRank < 0 ? preferred.length : leftRank) -
+          (rightRank < 0 ? preferred.length : rightRank);
+      })
+      .slice(0, 2)
+      .map(([key, value]) => {
+        const safeValue = String(value)
+          .replace(/(https?:\/\/)[^\s/@:]+:[^\s/@]+@/giu, "$1…:…@")
+          .replace(/([?&](?:token|secret|password|api[_-]?key)=)[^&\s]+/giu, "$1…");
+        const rendered = truncateToWidth(safeValue, 36, "…");
+        return `${key}=${rendered}`;
+      });
+    return entries.join(" · ");
+  };
+
+  const thirdPartyResultSummary = (component: any): string => {
+    const detailsError = component.result?.details?.error;
+    const text = typeof detailsError === "string"
+      ? detailsError
+      : component.result?.content
+        ?.filter((item: any) => item?.type === "text" && typeof item.text === "string")
+        .map((item: any) => item.text)
+        .join("\n");
+    const firstLine = stripTerminalSequences(String(text ?? ""))
+      .split("\n")
+      .map((line) => line.trim())
+      .find(Boolean);
+    if (firstLine) return truncateToWidth(firstLine, 72, "…");
+    if (component.result) return component.result.isError ? "Failed" : "Done";
+    return component.executionStarted ? "Running…" : "Pending";
+  };
+
+  const renderThirdPartyCompact = (component: any, width: number, theme: any): string[] => {
+    const label = component.toolDefinition?.label || toolDisplayName(component.toolName);
+    const args = conciseThirdPartyArgs(component.args);
+    const title = `● ${label}${args ? `(${args})` : ""}`;
+    const result = thirdPartyResultSummary(component);
+    const resultColor = component.result?.isError ? "error" : "muted";
+    return [
+      theme.fg("accent", theme.bold(truncateToWidth(title, Math.max(1, width), "…"))),
+      theme.fg(resultColor, truncateToWidth(`  └ ${result}`, Math.max(1, width), "…")),
+    ];
+  };
 
   const clearToolActivityHolds = () => {
     for (const hold of toolActivityHolds.values()) {
@@ -1435,6 +1503,9 @@ export default function prettyTui(pi: ExtensionAPI) {
 
   const liveCleanToolCount = (): number =>
     Math.max(cleanRun.count, cleanRun.currentToolCallIds.length);
+
+  const thoughtCountForTool = (toolCallId: string | undefined): number =>
+    toolCallId ? activityTimeline.groupForTool(toolCallId)?.thoughtCount ?? 0 : 0;
 
   const currentCleanActivity = (): string => {
     if (cleanRun.activeToolCallId) {
@@ -1522,6 +1593,10 @@ export default function prettyTui(pi: ExtensionAPI) {
       cleanToolComponents.set(this.toolCallId, this);
       knownToolCallIds.add(this.toolCallId);
       const member = activityTimeline.addTool(this.toolCallId, this.toolName);
+      cleanToolNames.set(
+        this.toolCallId,
+        this.toolDefinition?.label || toolDisplayName(this.toolName),
+      );
       if (this[renderedModeKey] !== renderMode) {
         this[renderedModeKey] = renderMode;
         this.updateDisplay();
@@ -1542,10 +1617,16 @@ export default function prettyTui(pi: ExtensionAPI) {
         continuation,
         childWidth,
       } = activityTreeStyle(group, member, width, childTheme);
-      const lines = originalToolRender.call(this, childWidth);
+      const thirdParty = !SPECIALIZED_TOOL_NAMES.has(this.toolName);
+      const lines = thirdParty && !this.expanded
+        ? renderThirdPartyCompact(this, childWidth, childTheme)
+        : originalToolRender.call(this, childWidth);
       if (lines.length === 0) return lines;
 
-      const contentLines = lines[0] === "" ? lines.slice(1) : lines;
+      const nativeContentLines = lines[0] === "" ? lines.slice(1) : lines;
+      const contentLines = thirdParty && this.expanded
+        ? nativeContentLines.map(stripAnsiBackgrounds)
+        : nativeContentLines;
       const decoratedContent = contentLines.map((line: string, index: number) =>
         truncateToWidth(
           (index === 0 ? childPrefix : continuation) + line,
@@ -1580,6 +1661,12 @@ export default function prettyTui(pi: ExtensionAPI) {
         } finally {
           changingAllToolsExpansion = false;
         }
+        return { handled: true };
+      }
+
+      if (!SPECIALIZED_TOOL_NAMES.has(this.toolName) && !this.expanded && isLeftClick) {
+        originalSetExpanded.call(this, true);
+        this.ui?.requestRender?.();
         return { handled: true };
       }
 
@@ -1649,6 +1736,7 @@ export default function prettyTui(pi: ExtensionAPI) {
       const group: ToolSummaryGroup = {
         count: cleanRun.count,
         failed: cleanRun.failed,
+        thoughtCount: thoughtCountForTool(cleanRun.lastCompletedToolCallId),
         lastToolCallId: cleanRun.lastCompletedToolCallId,
         toolCallIds: cleanRun.currentToolCallIds.slice(),
         activity,
@@ -1657,6 +1745,7 @@ export default function prettyTui(pi: ExtensionAPI) {
       settledSummaries.set(group.lastToolCallId, {
         count: group.count,
         failed: group.failed,
+        thoughtCount: group.thoughtCount ?? 0,
         activity: activityValueForHold(group.lastToolCallId, activity),
       });
       setCleanGroupMembers(group.lastToolCallId, group.toolCallIds ?? []);
@@ -1678,23 +1767,33 @@ export default function prettyTui(pi: ExtensionAPI) {
     settledSummaries.set(group.lastToolCallId, {
       count: group.count,
       failed: group.failed,
+      thoughtCount: group.thoughtCount ?? 0,
       activity: activityValueForHold(group.lastToolCallId, "done"),
     });
   };
 
-  const summaryText = (count: number, _failed: number, activity = "done"): string => {
+  const summaryText = (
+    count: number,
+    _failed: number,
+    thoughtCount: number,
+    activity = "done",
+  ): string => {
     const activityText = typeof activity === "string" ? activity : "done";
     const countLabel = `${count} tool ${count === 1 ? "call" : "calls"}`;
+    const thoughtLabel = thoughtCount > 0
+      ? ` · ${thoughtCount} ${thoughtCount === 1 ? "thought" : "thoughts"}`
+      : "";
     const activityLabel = activityText !== "done" && activityText.trim()
       ? ` · ${activityText}`
       : "";
-    return `${countLabel}${activityLabel}`;
+    return `${countLabel}${thoughtLabel}${activityLabel}`;
   };
 
   const summaryRow = (
     theme: any,
     count: number,
     failed: number,
+    thoughtCount: number,
     activity: DisplayValue = "done",
     collapsedDone = false,
   ): DisplayRow => ({
@@ -1715,7 +1814,8 @@ export default function prettyTui(pi: ExtensionAPI) {
       const detailColor = label === "Done" && collapsedDone ? "thinkingText" : "text";
       return theme.fg(color, theme.bold(label)) +
         theme.fg("dim", "(") +
-        theme.fg(detailColor, summaryText(count, failed, currentActivity)) + theme.fg("dim", ")");
+        theme.fg(detailColor, summaryText(count, failed, thoughtCount, currentActivity)) +
+        theme.fg("dim", ")");
     },
   });
 
@@ -1724,18 +1824,31 @@ export default function prettyTui(pi: ExtensionAPI) {
     if (!summaryTheme) return [];
     const settled = settledSummaries.get(lastToolCallId);
     if (settled) {
-      return block([summaryRow(summaryTheme, settled.count, settled.failed, settled.activity)]).render(width);
+      return block([summaryRow(
+        summaryTheme,
+        settled.count,
+        settled.failed,
+        settled.thoughtCount,
+        settled.activity,
+      )]).render(width);
     }
     if (cleanRun.activeToolCallId === lastToolCallId) {
       return block([summaryRow(
         summaryTheme,
         liveCleanToolCount(),
         cleanRun.failed,
+        thoughtCountForTool(lastToolCallId),
         () => cleanRun.activeToolName ?? currentCleanActivity(),
       )]).render(width);
     }
     if (cleanRun.lastCompletedToolCallId === lastToolCallId && cleanRun.count > 0) {
-      return block([summaryRow(summaryTheme, cleanRun.count, cleanRun.failed, currentCleanActivity)]).render(width);
+      return block([summaryRow(
+        summaryTheme,
+        cleanRun.count,
+        cleanRun.failed,
+        thoughtCountForTool(lastToolCallId),
+        currentCleanActivity,
+      )]).render(width);
     }
     return [];
   };
@@ -1755,6 +1868,7 @@ export default function prettyTui(pi: ExtensionAPI) {
         summaryTheme,
         Math.max(settled.count, group.toolCallIds.length),
         settled.failed,
+        Math.max(settled.thoughtCount, group.thoughtCount),
         settled.activity,
         collapsedDone,
       )]).render(width));
@@ -1770,6 +1884,7 @@ export default function prettyTui(pi: ExtensionAPI) {
         summaryTheme,
         Math.max(group.toolCallIds.length, liveCleanToolCount()),
         cleanRun.failed,
+        group.thoughtCount,
         () => cleanRun.activeToolName ?? currentCleanActivity(),
         collapsedDone,
       )]).render(width));
@@ -1795,6 +1910,7 @@ export default function prettyTui(pi: ExtensionAPI) {
             theme,
             settledSummary.count,
             settledSummary.failed,
+            settledSummary.thoughtCount,
             settledSummary.activity,
             true,
           )]).render(width);
@@ -1806,6 +1922,7 @@ export default function prettyTui(pi: ExtensionAPI) {
             theme,
             liveCleanToolCount(),
             cleanRun.failed,
+            thoughtCountForTool(toolCallId),
             () => cleanRun.activeToolName ?? name,
           )]).render(width);
         }
@@ -1817,7 +1934,13 @@ export default function prettyTui(pi: ExtensionAPI) {
           cleanRun.count > 0 &&
           !cleanRun.activeToolCallId
         ) {
-          return block([summaryRow(theme, cleanRun.count, cleanRun.failed, currentCleanActivity)]).render(width);
+          return block([summaryRow(
+            theme,
+            cleanRun.count,
+            cleanRun.failed,
+            thoughtCountForTool(toolCallId),
+            currentCleanActivity,
+          )]).render(width);
         }
 
         // Do not fall back to the per-component pending state here: Pi may
@@ -1860,6 +1983,7 @@ export default function prettyTui(pi: ExtensionAPI) {
           ? [{
               count: data.count ?? 0,
               failed: data.failed ?? 0,
+              thoughtCount: data.thoughtCount ?? 0,
               lastToolCallId: data.lastToolCallId,
             }]
           : (() => {
@@ -1868,6 +1992,7 @@ export default function prettyTui(pi: ExtensionAPI) {
                 ? [{
                     count: data?.count ?? 0,
                     failed: data?.failed ?? 0,
+                    thoughtCount: data?.thoughtCount ?? 0,
                     lastToolCallId: summaryCallId,
                   }]
                 : [];
@@ -1881,7 +2006,7 @@ export default function prettyTui(pi: ExtensionAPI) {
       // accidentally store the transient responding... activity, so always
       // normalize their display to Done.
       return block(missingGroups.map((group) =>
-        summaryRow(theme, group.count, group.failed, "done", true)
+        summaryRow(theme, group.count, group.failed, group.thoughtCount ?? 0, "done", true)
       )).render(width);
     },
     invalidate() {},
@@ -1939,9 +2064,15 @@ export default function prettyTui(pi: ExtensionAPI) {
     const explicitSummaryIds = new Set<string>();
 
     const rememberGroup = (group: ToolSummaryGroup, entryId?: string) => {
+      const thoughtCount = Math.max(
+        group.thoughtCount ?? 0,
+        thoughtCountForTool(group.lastToolCallId),
+      );
+      group.thoughtCount = thoughtCount;
       settledSummaries.set(group.lastToolCallId, {
         count: group.count,
         failed: group.failed,
+        thoughtCount,
         activity: "done",
       });
       if (group.toolCallIds?.length) {
@@ -1953,11 +2084,22 @@ export default function prettyTui(pi: ExtensionAPI) {
 
     const finishGroup = () => {
       if (lastToolCallId && count > 0) {
-        lastFinishedGroup = { count, failed, lastToolCallId, toolCallIds: [...toolCalls] };
+        lastFinishedGroup = {
+          count,
+          failed,
+          thoughtCount: thoughtCountForTool(lastToolCallId),
+          lastToolCallId,
+          toolCallIds: [...toolCalls],
+        };
         inferredGroups.push(lastFinishedGroup);
         setCleanGroupMembers(lastToolCallId, [...toolCalls]);
         if (!explicitSummaryIds.has(lastToolCallId)) {
-          settledSummaries.set(lastToolCallId, { count, failed, activity: "done" });
+          settledSummaries.set(lastToolCallId, {
+            count,
+            failed,
+            thoughtCount: lastFinishedGroup.thoughtCount ?? 0,
+            activity: "done",
+          });
         }
       }
       count = 0;
@@ -1972,7 +2114,13 @@ export default function prettyTui(pi: ExtensionAPI) {
       if (!group.toolCallIds?.length) return [];
       const persistedIds = new Set(group.toolCallIds);
       const currentGroup = lastToolCallId && count > 0
-        ? [{ count, failed, lastToolCallId, toolCallIds: [...toolCalls] }]
+        ? [{
+            count,
+            failed,
+            thoughtCount: thoughtCountForTool(lastToolCallId),
+            lastToolCallId,
+            toolCallIds: [...toolCalls],
+          }]
         : [];
       return [...inferredGroups, ...currentGroup].filter((inferred) =>
         inferred.toolCallIds?.some((toolCallId) => persistedIds.has(toolCallId)),
@@ -2051,6 +2199,7 @@ export default function prettyTui(pi: ExtensionAPI) {
           const group = {
             count: data.count ?? 0,
             failed: data.failed ?? 0,
+            thoughtCount: data.thoughtCount ?? 0,
             lastToolCallId: data.lastToolCallId,
           };
           rememberGroup(group);
@@ -2062,6 +2211,7 @@ export default function prettyTui(pi: ExtensionAPI) {
           rememberGroup({
             count: data?.count ?? lastFinishedGroup.count,
             failed: data?.failed ?? lastFinishedGroup.failed,
+            thoughtCount: data?.thoughtCount ?? lastFinishedGroup.thoughtCount ?? 0,
             lastToolCallId: lastFinishedGroup.lastToolCallId,
           }, entry.id);
         } else if (lastToolCallId && count > 0) {
@@ -2069,6 +2219,7 @@ export default function prettyTui(pi: ExtensionAPI) {
           rememberGroup({
             count: data?.count ?? count,
             failed: data?.failed ?? failed,
+            thoughtCount: data?.thoughtCount ?? thoughtCountForTool(lastToolCallId),
             lastToolCallId,
           }, entry.id);
         }
@@ -2117,6 +2268,17 @@ export default function prettyTui(pi: ExtensionAPI) {
 
   pi.on("session_start", (_event, ctx) => restoreCleanSession(ctx));
   pi.on("session_tree", (_event, ctx) => restoreCleanSession(ctx));
+  pi.on("session_before_compact", () => {
+    // Pi emits this for manual, threshold, and overflow-recovery compaction.
+    // Seal the activity group before the compaction indicator is rendered so
+    // completed work never remains labelled Running(... · thinking...). A
+    // lifecycle boundary overrides the minimum per-tool activity hold.
+    clearToolActivityHolds();
+    finishCleanGroup("done");
+    settleLastCleanGroup();
+    cleanRun.activity = "done";
+    cleanRun.requestRender?.();
+  });
   pi.on("session_compact", () => {
     // Compaction is a hard chronological boundary. Keep tools completed before
     // it in their own group so expanded hierarchy lines never cross the summary.
@@ -2125,6 +2287,14 @@ export default function prettyTui(pi: ExtensionAPI) {
     // Pre-compaction tools have been summarized intentionally. Their durable
     // fallback rows should not be replayed beside the compacted transcript.
     cleanContextCompacted = true;
+    cleanRun.requestRender?.();
+  });
+  pi.on("session_compact_failed", () => {
+    // The pre-compaction work is still complete even when compaction is
+    // cancelled or fails. Keep it settled and let a retry start a new group.
+    settleLastCleanGroup();
+    cleanRun.activity = "done";
+    cleanRun.requestRender?.();
   });
 
   const hasVisibleAssistantText = (message: any): boolean =>
@@ -2291,6 +2461,7 @@ export default function prettyTui(pi: ExtensionAPI) {
       settledSummaries.set(group.lastToolCallId, {
         count: group.count,
         failed: group.failed,
+        thoughtCount: group.thoughtCount ?? 0,
         activity: activityValueForHold(group.lastToolCallId, "done"),
       });
     }
@@ -2306,14 +2477,17 @@ export default function prettyTui(pi: ExtensionAPI) {
 
     const count = groups.reduce((total, group) => total + group.count, 0);
     const failed = groups.reduce((total, group) => total + group.failed, 0);
+    const thoughtCount = groups.reduce((total, group) => total + (group.thoughtCount ?? 0), 0);
     const lastToolCallId = groups[groups.length - 1]?.lastToolCallId;
     pi.appendEntry<ToolSummaryData>("pretty-tui-tool-summary", {
       count,
       failed,
+      thoughtCount,
       lastToolCallId,
-      groups: groups.map(({ count, failed, lastToolCallId, toolCallIds }) => ({
+      groups: groups.map(({ count, failed, thoughtCount, lastToolCallId, toolCallIds }) => ({
         count,
         failed,
+        thoughtCount,
         lastToolCallId,
         toolCallIds,
       })),

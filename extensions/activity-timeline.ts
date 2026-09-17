@@ -13,6 +13,7 @@ export type ActivityGroup = {
   id: string;
   members: ActivityMember[];
   toolCallIds: string[];
+  thoughtCount: number;
 };
 
 const toolMemberId = (toolCallId: string) => `tool:${toolCallId}`;
@@ -49,7 +50,7 @@ export class ActivityTimeline {
       if (current) return current;
     }
     const id = `activity:${++this.sequence}`;
-    const group: ActivityGroup = { id, members: [], toolCallIds: [] };
+    const group: ActivityGroup = { id, members: [], toolCallIds: [], thoughtCount: 0 };
     this.groupsById.set(id, group);
     this.currentGroupId = id;
     return group;
@@ -89,6 +90,7 @@ export class ActivityTimeline {
     };
     const group = this.currentGroup();
     group.members.push(member);
+    group.thoughtCount += 1;
     this.memberGroups.set(member.id, group.id);
     this.thinkingMembers.set(messageKey, member.id);
     return member;

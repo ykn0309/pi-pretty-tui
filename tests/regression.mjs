@@ -132,8 +132,29 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
     timeline.groups().map((group) => group.members.map((member) => member.kind === "tool" ? member.toolCallId : member.messageKey)),
     [["m1", "native", "third-party"], ["m2", "after-error"]],
   );
+  assert.deepEqual(timeline.groups().map((group) => group.thoughtCount), [1, 1]);
+  timeline.addThinking("m2", "Updated streaming thought");
+  assert.equal(timeline.groups()[1].thoughtCount, 1);
   assert.equal(assistantSystemBoundary({ role: "assistant", stopReason: "error", content: [] }), true);
   assert.equal(assistantSystemBoundary({ role: "assistant", stopReason: "toolUse", content: [] }), false);
+}
+
+// Restored groups derive thought counts from transcript members, including
+// summaries written before thoughtCount was persisted.
+{
+  const thinkingCall = assistant("00", null, [{ id: "thought-tool" }]);
+  thinkingCall.message.content.unshift({ type: "thinking", thinking: "Plan" });
+  const visible = await renderCollapsedSummaries([
+    thinkingCall,
+    result("01", "00", "thought-tool"),
+    summary("02", "01", [{
+      count: 1,
+      failed: 0,
+      lastToolCallId: "thought-tool",
+      toolCallIds: ["thought-tool"],
+    }]),
+  ]);
+  assert.ok(visible[0].output.includes("1 thought"));
 }
 
 // A persisted summary may include an orphaned call without a toolResult. It
@@ -231,6 +252,20 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
   await runTool("live-before-steer");
   await emit("message_start", { message: { role: "user", content: [{ type: "text", text: "steer" }] } });
   await runTool("live-before-compact");
+  await emit("session_before_compact", { reason: "threshold", willRetry: false });
+  const compactingComponent = new ToolExecutionComponent(
+    "obs_recall",
+    "live-before-compact",
+    {},
+    undefined,
+    { renderShell: "self", renderCall: () => new Text("recall", 0, 0) },
+    { requestRender() {} },
+    process.cwd(),
+  );
+  const compactingText = compactingComponent.render(80).join("\n")
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
+  assert.ok(compactingText.includes("Done(1 tool call)"));
+  assert.ok(!compactingText.includes("Running("));
   await emit("session_compact");
   await runTool("live-after-compact");
   await emit("agent_settled");
@@ -266,9 +301,14 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
   await emit("agent_start");
   const ui = { requestRender() {} };
   const thirdPartyDefinition = {
+    label: "Recall Observation",
     renderShell: "self",
     renderCall: (_args, toolTheme) => new Text(toolTheme.fg("accent", "Third-party call"), 0, 0),
-    renderResult: (_result, _options, toolTheme) => new Text(toolTheme.fg("toolOutput", "Third-party result"), 0, 0),
+    renderResult: (_result, _options, toolTheme) => new Text(
+      toolTheme.bg("toolSuccessBg", toolTheme.fg("toolOutput", "Money saved · Third-party result")),
+      0,
+      0,
+    ),
   };
   const toolOnly = new ToolExecutionComponent(
     "web_search",
@@ -315,15 +355,26 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
   const collapsedTool = toolComponent.render(80);
   const collapsedThinkingText = collapsedThinking.join("\n").replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
   assert.ok(collapsedThinkingText.includes("Running("));
+  assert.ok(collapsedThinkingText.includes("1 thought"));
   assert.equal(collapsedTool.length, 0);
 
   thinkingComponent.handleMouse({
     type: "click", button: "left", x: 1, y: 1, width: 80, height: collapsedThinking.length,
   });
   const compactThinking = thinkingComponent.render(80).join("\n");
+  const compactTool = toolComponent.render(80).join("\n");
+  assert.ok(compactThinking.includes("├─") && compactThinking.includes("● Thinking"));
+  assert.ok(!compactThinking.includes("Inspect compatibility"));
+  assert.ok(compactTool.includes("└─") && compactTool.includes("● Recall Observation"));
+  assert.ok(!compactTool.includes("Third-party call"));
+
+  toolComponent.handleMouse({
+    type: "click", button: "left", x: 8, y: 1, width: 80, height: toolComponent.render(80).length,
+  });
   const expandedTool = toolComponent.render(80).join("\n");
-  assert.ok(compactThinking.includes("├─") && compactThinking.includes("Thinking(Inspect compatibility"));
-  assert.ok(expandedTool.includes("└─") && expandedTool.includes("Third-party call"));
+  assert.ok(expandedTool.includes("Third-party call"));
+  assert.ok(expandedTool.includes("Money saved · Third-party result"));
+  assert.ok(!/\x1b\[(?:4[0-9]|10[0-7]|48(?:;|:))/u.test(expandedTool));
 
   const compactLines = thinkingComponent.render(80);
   thinkingComponent.handleMouse({
