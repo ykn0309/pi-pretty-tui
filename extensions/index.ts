@@ -129,10 +129,9 @@ export default function prettyTui(pi: ExtensionAPI) {
     const directTheme = cleanToolThemes.get(toolCallId);
     if (directTheme) return directTheme;
     const activityGroup = activityTimeline.groupForTool(toolCallId);
-    const cachedActivityTheme = activityGroup
-      ? activityFallbackThemes.get(activityGroup.id)
-      : undefined;
-    if (cachedActivityTheme) return cachedActivityTheme;
+    // Prefer a real tool renderer theme over the Markdown-derived fallback.
+    // A group that starts with Thought installs the fallback first; returning
+    // it here made later third-party success dots use the heading color.
     if (activityGroup) {
       for (const id of activityGroup.toolCallIds) {
         const activityTheme = cleanToolThemes.get(id);
@@ -142,6 +141,10 @@ export default function prettyTui(pi: ExtensionAPI) {
         }
       }
     }
+    const cachedActivityTheme = activityGroup
+      ? activityFallbackThemes.get(activityGroup.id)
+      : undefined;
+    if (cachedActivityTheme) return cachedActivityTheme;
     const legacyOwner = cleanToolCallGroupOwners.get(toolCallId);
     const legacyIds = legacyOwner ? cleanGroupToolCallIds.get(legacyOwner) : undefined;
     return legacyIds?.map((id) => cleanToolThemes.get(id)).find(Boolean);
@@ -548,6 +551,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     const renderedModeKey = Symbol("pretty-tui.rendered-assistant-mode");
     const renderedExpansionKey = Symbol("pretty-tui.rendered-assistant-expansion");
     const cleanThinkingRenderCacheKey = Symbol("pretty-tui.clean-thinking-render-cache");
+    const cleanThinkingDetailKey = Symbol("pretty-tui.clean-thinking-detail");
 
     const eligibleThinking = (message: any) =>
       Array.isArray(message?.content) &&
@@ -556,7 +560,6 @@ export default function prettyTui(pi: ExtensionAPI) {
           typeof item.thinking === "string" &&
           item.thinking.length > 0,
       ) &&
-      !visibleAssistantText(message) &&
       !assistantSystemBoundary(message);
 
     const refreshGroup = (group: ActivityGroup) => {
@@ -589,8 +592,11 @@ export default function prettyTui(pi: ExtensionAPI) {
 
       const previousHideThinkingBlock = this.hideThinkingBlock;
       this.hideThinkingBlock = false;
+      // Clean mode owns grouped thinking completely. Removing it from Pi's
+      // native content tree also removes the native MouseRegion that would
+      // otherwise toggle a second, unrelated `Thinking...` block.
       const displayMessage =
-        renderMode === "clean" && !groupedThinking && !cleanToolsExpanded && Array.isArray(message?.content)
+        groupedThinking && Array.isArray(message?.content)
           ? { ...message, content: message.content.filter((item: any) => item.type !== "thinking") }
           : message;
       try {
@@ -635,11 +641,13 @@ export default function prettyTui(pi: ExtensionAPI) {
         });
       }
       const position = activityMemberPosition(group, member);
+      const visibleLines = visibleAssistantText(message) ? originalRender.call(this, width) : [];
       const revealed = activityGroupRevealed(group);
       if (!revealed) {
-        return position.first
+        const activityLines = position.first
           ? ["", ...renderActivityGroupSummary(group, width, true)]
           : [];
+        return [...activityLines, ...visibleLines];
       }
 
       const groupTheme = activityGroupTheme(group);
@@ -672,8 +680,26 @@ export default function prettyTui(pi: ExtensionAPI) {
         : this.markdownTheme.quote(label);
       let contentLines: string[] = [header];
       if (expanded) {
-        const nativeLines = originalRender.call(this, Math.max(1, childWidth - visibleWidth("  │ ")));
-        const detailLines = nativeLines[0] === "" ? nativeLines.slice(1) : nativeLines;
+        const detailWidth = Math.max(1, childWidth - visibleWidth("  │ "));
+        const detailText = member.thinking ?? thinkingText(message);
+        let detail = this[cleanThinkingDetailKey];
+        if (!detail || detail.text !== detailText) {
+          detail = {
+            text: detailText,
+            component: new Markdown(
+              detailText,
+              0,
+              0,
+              this.markdownTheme,
+              {
+                color: (text: string) => groupTheme.fg("thinkingText", text),
+                italic: true,
+              },
+            ),
+          };
+          this[cleanThinkingDetailKey] = detail;
+        }
+        const detailLines = detail.component.render(detailWidth);
         contentLines.push(...detailLines.map((line: string) => groupTheme.fg("dim", "  │ ") + line));
       }
       const decorated = contentLines.map((line, index) =>
@@ -692,7 +718,7 @@ export default function prettyTui(pi: ExtensionAPI) {
           lines: output,
         };
       }
-      return output;
+      return [...output, ...visibleLines];
     };
 
     const patchedHandleMouse = function (this: any, event: any) {
@@ -1953,7 +1979,9 @@ export default function prettyTui(pi: ExtensionAPI) {
         return { handled: true };
       }
 
-      const thirdPartyHeaderY = position.first ? summaryHeight + 1 : 1;
+      // Self-rendering tools reserve y=0 for Pi's leading spacer. Clean mode
+      // replaces that spacer with the compact header for non-first members.
+      const thirdPartyHeaderY = position.first ? summaryHeight + 1 : 0;
       if (
         !SPECIALIZED_TOOL_NAMES.has(this.toolName) &&
         isLeftClick &&
@@ -2559,11 +2587,11 @@ export default function prettyTui(pi: ExtensionAPI) {
       }
 
       if (message.role === "assistant") {
-        if (messageHasVisibleText(message)) finishGroup();
         const thinking = thinkingText(message);
-        if (thinking && !messageHasVisibleText(message) && !assistantSystemBoundary(message)) {
+        if (thinking && !assistantSystemBoundary(message)) {
           activityTimeline.addThinking(assistantMessageKey(message), thinking);
         }
+        if (messageHasVisibleText(message)) finishGroup();
         for (const item of messageContentItems(message)) {
           if (item.type !== "toolCall" || !item.id) continue;
           toolCalls.add(item.id);
@@ -2637,7 +2665,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     );
 
   const trackThinkingActivity = (message: any): void => {
-    if (message?.role !== "assistant" || messageHasVisibleText(message) || assistantSystemBoundary(message)) return;
+    if (message?.role !== "assistant" || assistantSystemBoundary(message)) return;
     const thinking = thinkingText(message);
     if (thinking) activityTimeline.addThinking(assistantMessageKey(message), thinking);
   };
@@ -2696,6 +2724,7 @@ export default function prettyTui(pi: ExtensionAPI) {
   // current activity and does not need a duplicate response status.
   pi.on("message_update", (event) => {
     if (hasVisibleAssistantText(event.message)) {
+      trackThinkingActivity(event.message);
       clearToolActivityHolds();
       closeAtAssistantBoundary(event.message, "done");
       return;
@@ -2710,6 +2739,7 @@ export default function prettyTui(pi: ExtensionAPI) {
   });
   pi.on("message_end", (event) => {
     if (hasVisibleAssistantText(event.message) || assistantSystemBoundary(event.message)) {
+      trackThinkingActivity(event.message);
       closeAtAssistantBoundary(event.message, "done");
       cleanRun.activity = "done";
       settleLastCleanGroup();

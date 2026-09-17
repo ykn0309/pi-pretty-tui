@@ -340,6 +340,63 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
   assert.deepEqual(nativeInfo, ["Standalone info"]);
 }
 
+// A final assistant message may contain both thinking and visible answer text.
+// Its Thought remains in the preceding group without retaining Pi's native
+// Thinking MouseRegion or hiding the visible response.
+{
+  const first = {
+    type: "message",
+    id: "20",
+    parentId: null,
+    timestamp: "2026-01-01T00:00:20.000Z",
+    message: {
+      role: "assistant",
+      timestamp: 20_000,
+      content: [
+        { type: "thinking", thinking: "Plan mixed response" },
+        { type: "toolCall", id: "mixed-tool", name: "obs_recall", arguments: {} },
+      ],
+    },
+  };
+  const mixed = {
+    type: "message",
+    id: "22",
+    parentId: "21",
+    timestamp: "2026-01-01T00:00:22.000Z",
+    message: {
+      role: "assistant",
+      timestamp: 22_000,
+      content: [
+        { type: "thinking", thinking: "Summarize mixed response" },
+        { type: "text", text: "Visible final answer" },
+      ],
+    },
+  };
+  await emit("session_start", {}, sessionContext([
+    first,
+    result("21", "20", "mixed-tool"),
+    mixed,
+  ]));
+  const firstComponent = new AssistantMessageComponent(first.message);
+  const mixedComponent = new AssistantMessageComponent(mixed.message);
+  firstComponent.handleMouse({
+    type: "click", button: "left", x: 1, y: 1, width: 80, height: firstComponent.render(80).length,
+  });
+  const compactMixed = mixedComponent.render(80).join("\n")
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
+  assert.ok(compactMixed.includes("● Thought"));
+  assert.ok(compactMixed.includes("Visible final answer"));
+  assert.ok(!compactMixed.includes("Thinking..."));
+  mixedComponent.handleMouse({
+    type: "click", button: "left", x: 1, y: 0, width: 80, height: mixedComponent.render(80).length,
+  });
+  const expandedMixed = mixedComponent.render(80).join("\n")
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
+  assert.ok(expandedMixed.includes("Summarize mixed response"));
+  assert.ok(expandedMixed.includes("Visible final answer"));
+  assert.ok(!expandedMixed.includes("Thinking..."));
+}
+
 // Persisted custom_message entries restore as ordered activity updates instead
 // of falling back to Pi's purple CustomMessage box.
 {
@@ -511,7 +568,7 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
   assert.ok(toolComponent.render(80).join("\n").includes("updated result"));
 
   toolComponent.handleMouse({
-    type: "click", button: "left", x: 8, y: 1, width: 80, height: toolComponent.render(80).length,
+    type: "click", button: "left", x: 8, y: 0, width: 80, height: toolComponent.render(80).length,
   });
   const expandedTool = toolComponent.render(80).join("\n");
   const expandedToolText = expandedTool.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
@@ -520,7 +577,7 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
   assert.ok(expandedTool.includes("Money saved · Third-party result"));
   assert.ok(!/\x1b\[(?:4[0-9]|10[0-7]|48(?:;|:))/u.test(expandedTool));
   toolComponent.handleMouse({
-    type: "click", button: "left", x: 8, y: 1, width: 80, height: toolComponent.render(80).length,
+    type: "click", button: "left", x: 8, y: 0, width: 80, height: toolComponent.render(80).length,
   });
   const reCollapsedTool = toolComponent.render(80).join("\n")
     .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
@@ -534,6 +591,20 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
   const fullThinking = thinkingComponent.render(80).join("\n");
   assert.ok(fullThinking.includes("● Thought"));
   assert.ok(fullThinking.includes("│") && fullThinking.includes("Preserve native rendering"));
+  assert.ok(!fullThinking.includes("Thinking..."));
+  thinkingComponent.handleMouse({
+    type: "click", button: "left", x: 8, y: 2, width: 80, height: thinkingComponent.render(80).length,
+  });
+  const reCollapsedThinking = thinkingComponent.render(80).join("\n");
+  assert.ok(reCollapsedThinking.includes("● Thought"));
+  assert.ok(!reCollapsedThinking.includes("Preserve native rendering"));
+  thinkingComponent.handleMouse({
+    type: "click", button: "left", x: 1, y: 1, width: 80, height: thinkingComponent.render(80).length,
+  });
+  const reCollapsedParent = thinkingComponent.render(80).join("\n")
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
+  assert.match(reCollapsedParent, /(?:Running|Done)\(/);
+  assert.ok(!reCollapsedParent.includes("● Thought"));
   for (const width of [1, 4, 8, 12]) {
     const lines = [
       ...thinkingComponent.render(width),
