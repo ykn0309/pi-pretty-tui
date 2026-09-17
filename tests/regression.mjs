@@ -262,6 +262,20 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
   assert.ok(secondaryHeading[0].includes("\x1b[48;5;94m"));
   assert.ok(secondaryHeading[0].includes("\x1b[97m") && secondaryHeading[0].includes("\x1b[4m"));
   assert.ok(!secondaryHeading[0].includes("\x1b[7m"));
+  const lightMarkdownTheme = {
+    ...markdownTheme,
+    heading: (text) => `\x1b[38;2;154;115;38m${text}\x1b[39m`,
+  };
+  const lightSecondaryHeading = new Markdown(
+    "## Light",
+    0,
+    0,
+    lightMarkdownTheme,
+    { color: (text) => `\x1b[38;2;31;35;40m${text}\x1b[39m` },
+  ).render(20);
+  assert.ok(lightSecondaryHeading[0].includes("\x1b[107m"));
+  assert.ok(lightSecondaryHeading[0].includes("\x1b[7m"));
+  assert.ok(!lightSecondaryHeading[0].includes("\x1b[48;5;94m"));
   const sixthHeading = new Markdown("###### Readable", 0, 0, markdownTheme).render(20);
   assert.ok(sixthHeading[0].includes("\x1b[3m") && sixthHeading[0].includes("\x1b[90m"));
   const narrowHeading = new Markdown("# Narrow heading", 0, 0, markdownTheme).render(5);

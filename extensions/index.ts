@@ -612,12 +612,27 @@ export default function prettyTui(pi: ExtensionAPI) {
           return lines;
         };
         const headingStyle = (text: string) => this.theme.heading(text);
+        const foregroundLuminance = (styled: string): number | undefined => {
+          const trueColor = /\x1b\[38;2;(\d+);(\d+);(\d+)m/.exec(styled);
+          if (!trueColor) return undefined;
+          const [, red, green, blue] = trueColor.map(Number);
+          return red * 0.2126 + green * 0.7152 + blue * 0.0722;
+        };
+        const defaultLuminance = foregroundLuminance(this.applyDefaultStyle("M"));
+        const headingLuminance = foregroundLuminance(headingStyle("M"));
+        const darkTheme =
+          defaultLuminance !== undefined
+            ? defaultLuminance >= 128
+            : (headingLuminance ?? 255) >= 160;
         const whiteStyle = (text: string) => `\x1b[97m${text}\x1b[39m`;
         const titleStyle =
           level === 1 || level === 3
             ? (text: string) => headingStyle(this.theme.bold(this.theme.underline(text)))
             : level === 2
-              ? (text: string) => whiteStyle(this.theme.bold(this.theme.underline(text)))
+              ? (text: string) =>
+                  (darkTheme ? whiteStyle : headingStyle)(
+                    this.theme.bold(this.theme.underline(text)),
+                  )
               : level === 4
                 ? (text: string) => headingStyle(this.theme.bold(text))
                 : level === 5
@@ -652,10 +667,10 @@ export default function prettyTui(pi: ExtensionAPI) {
         if (level === 2) {
           // Reverse only the rendered title cells: the theme's heading color
           // becomes a compact, content-width background label with no frame.
-          const lines = wrapTextWithAnsi(title, maxWidth).map(
-            // A dark amber background keeps the white label text readable in
-            // both dark and light terminal themes.
-            (line: string) => `\x1b[48;5;94m${line}\x1b[49m`,
+          const lines = wrapTextWithAnsi(title, maxWidth).map((line: string) =>
+            darkTheme
+              ? `\x1b[48;5;94m${line}\x1b[49m`
+              : `\x1b[107m\x1b[7m${line}\x1b[27m\x1b[49m`
           );
           return addHeadingSpacing(lines);
         }
