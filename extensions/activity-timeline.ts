@@ -1,4 +1,4 @@
-export type ActivityMemberKind = "tool" | "thinking";
+export type ActivityMemberKind = "tool" | "thinking" | "update";
 
 export type ActivityMember = {
   id: string;
@@ -7,11 +7,10 @@ export type ActivityMember = {
   toolName?: string;
   messageKey?: string;
   thinking?: string;
-};
-
-export type ActivityNotice = {
-  id: string;
-  message: string;
+  updateKey?: string;
+  updateTitle?: string;
+  updateContent?: string;
+  persistent?: boolean;
 };
 
 export type ActivityGroup = {
@@ -19,11 +18,11 @@ export type ActivityGroup = {
   members: ActivityMember[];
   toolCallIds: string[];
   thoughtCount: number;
-  notices: ActivityNotice[];
 };
 
 const toolMemberId = (toolCallId: string) => `tool:${toolCallId}`;
 const thinkingMemberId = (messageKey: string) => `thinking:${messageKey}`;
+const updateMemberId = (updateKey: string) => `update:${updateKey}`;
 
 /**
  * Transcript-first activity grouping. The timeline owns chronology and hard
@@ -35,9 +34,9 @@ export class ActivityTimeline {
   private memberGroups = new Map<string, string>();
   private toolMembers = new Map<string, string>();
   private thinkingMembers = new Map<string, string>();
+  private updateMembers = new Map<string, string>();
   private currentGroupId?: string;
   private sequence = 0;
-  private noticeSequence = 0;
 
   clear(): void {
     this.groupsById.clear();
@@ -45,9 +44,9 @@ export class ActivityTimeline {
     this.memberGroups.clear();
     this.toolMembers.clear();
     this.thinkingMembers.clear();
+    this.updateMembers.clear();
     this.currentGroupId = undefined;
     this.sequence = 0;
-    this.noticeSequence = 0;
   }
 
   boundary(): void {
@@ -65,7 +64,6 @@ export class ActivityTimeline {
       members: [],
       toolCallIds: [],
       thoughtCount: 0,
-      notices: [],
     };
     this.groupsById.set(id, group);
     this.currentGroupId = id;
@@ -114,14 +112,30 @@ export class ActivityTimeline {
     return member;
   }
 
-  addNotice(message: string): ActivityNotice | undefined {
-    const normalized = message.trim();
-    if (!normalized || !this.currentGroupId) return undefined;
+  addUpdate(
+    updateKey: string,
+    title: string,
+    content: string,
+    persistent: boolean,
+  ): ActivityMember | undefined {
+    const existingId = this.updateMembers.get(updateKey);
+    if (existingId) return this.member(existingId);
+    if (!this.currentGroupId) return undefined;
     const group = this.groupsById.get(this.currentGroupId);
     if (!group || group.toolCallIds.length === 0) return undefined;
-    const notice = { id: `notice:${++this.noticeSequence}`, message: normalized };
-    group.notices.push(notice);
-    return notice;
+    const member: ActivityMember = {
+      id: updateMemberId(updateKey),
+      kind: "update",
+      updateKey,
+      updateTitle: title.trim() || "Update",
+      updateContent: content.trim(),
+      persistent,
+    };
+    group.members.push(member);
+    this.membersById.set(member.id, member);
+    this.memberGroups.set(member.id, group.id);
+    this.updateMembers.set(updateKey, member.id);
+    return member;
   }
 
   currentGroup(): ActivityGroup | undefined {
@@ -155,6 +169,11 @@ export class ActivityTimeline {
     return memberId ? this.member(memberId) : undefined;
   }
 
+  memberForUpdate(updateKey: string): ActivityMember | undefined {
+    const memberId = this.updateMembers.get(updateKey);
+    return memberId ? this.member(memberId) : undefined;
+  }
+
   groupForTool(toolCallId: string): ActivityGroup | undefined {
     const member = this.memberForTool(toolCallId);
     return member ? this.groupForMember(member.id) : undefined;
@@ -162,6 +181,11 @@ export class ActivityTimeline {
 
   groupForThinking(messageKey: string): ActivityGroup | undefined {
     const member = this.memberForThinking(messageKey);
+    return member ? this.groupForMember(member.id) : undefined;
+  }
+
+  groupForUpdate(updateKey: string): ActivityGroup | undefined {
+    const member = this.memberForUpdate(updateKey);
     return member ? this.groupForMember(member.id) : undefined;
   }
 }

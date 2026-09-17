@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { createJiti } from "jiti";
 import {
   AssistantMessageComponent,
+  CustomMessageComponent,
   InteractiveMode,
   ToolExecutionComponent,
   initTheme,
@@ -135,8 +136,11 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
   assert.deepEqual(timeline.groups().map((group) => group.thoughtCount), [1, 1]);
   timeline.addThinking("m2", "Updated streaming thought");
   assert.equal(timeline.groups()[1].thoughtCount, 1);
-  timeline.addNotice("Extension info");
-  assert.deepEqual(timeline.groups()[1].notices.map((notice) => notice.message), ["Extension info"]);
+  timeline.addUpdate("update-1", "Extension Info", "Details", false);
+  assert.deepEqual(
+    timeline.groups()[1].members.map((member) => member.kind),
+    ["thinking", "tool", "update"],
+  );
   assert.equal(assistantSystemBoundary({ role: "assistant", stopReason: "error", content: [] }), true);
   assert.equal(assistantSystemBoundary({ role: "assistant", stopReason: "toolUse", content: [] }), false);
 }
@@ -393,8 +397,10 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
   toolComponent.markExecutionStarted();
   toolComponent.updateResult({ content: [{ type: "text", text: "ok" }], isError: false });
   const nativeNotifications = [];
+  const infoComponents = [];
   const notifyHost = {
     ui,
+    chatContainer: { addChild(component) { infoComponents.push(component); } },
     showStatus(message) { nativeNotifications.push(["info", message]); },
     showWarning(message) { nativeNotifications.push(["warning", message]); },
     showError(message) { nativeNotifications.push(["error", message]); },
@@ -407,15 +413,26 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
     ["warning", "Keep warning native"],
     ["error", "Keep error native"],
   ]);
+  assert.equal(infoComponents.length, 2);
+  const customMessage = {
+    role: "custom",
+    timestamp: 12346,
+    customType: "web-search-content-ready",
+    content: "Content fetched for 2/3 URLs",
+    display: true,
+  };
+  await emit("message_start", { message: customMessage });
+  const customComponent = new CustomMessageComponent(customMessage);
 
   const collapsedThinking = thinkingComponent.render(80);
   const collapsedTool = toolComponent.render(80);
   const collapsedThinkingText = collapsedThinking.join("\n").replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
   assert.ok(collapsedThinkingText.includes("Running("));
   assert.ok(collapsedThinkingText.includes("1 thought"));
-  assert.ok(collapsedThinkingText.includes("Footer info"));
-  assert.ok(collapsedThinkingText.includes("Default footer"));
+  assert.ok(!collapsedThinkingText.includes("Footer info"));
   assert.equal(collapsedTool.length, 0);
+  assert.equal(infoComponents[0].render(80).length, 0);
+  assert.equal(customComponent.render(80).length, 0);
   const wheelEvent = {
     type: "scroll", direction: "up", x: 1, y: 1, width: 80, height: collapsedThinking.length,
   };
@@ -427,19 +444,18 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
   });
   const compactThinking = thinkingComponent.render(80).join("\n");
   const compactTool = toolComponent.render(80).join("\n");
-  assert.ok(compactThinking.includes("├─") && compactThinking.includes("● Thinking"));
+  const infoUpdate = infoComponents.map((component) => component.render(80).join("\n")).join("\n");
+  const customUpdate = customComponent.render(80).join("\n");
+  assert.ok(compactThinking.includes("├─") && compactThinking.includes("● Thought"));
   assert.ok(!compactThinking.includes("Inspect compatibility"));
-  assert.ok(compactTool.includes("└─") && compactTool.includes("● Recall Observation"));
-  assert.ok(compactTool.includes("ok"));
-  assert.ok(compactTool.indexOf("ok") < compactTool.indexOf("Footer info"));
-  const noticeLine = toolComponent.render(80)
-    .map((line) => line.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, ""))
-    .findIndex((line) => line.includes("Footer info"));
-  assert.ok(noticeLine >= 0);
-  assert.equal(toolComponent.handleMouse({
-    type: "click", button: "left", x: 1, y: noticeLine + 1, width: 80, height: toolComponent.render(80).length,
-  }), undefined);
-  assert.equal(toolComponent.expanded, false);
+  const compactToolText = compactTool.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
+  const infoUpdateText = infoUpdate.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
+  assert.ok(compactToolText.includes("├─") && compactToolText.includes("● Recall Observation"));
+  assert.ok(compactToolText.includes("ok"));
+  assert.ok(infoUpdateText.includes("◇ Footer info"));
+  assert.ok(customUpdate.includes("└─") && customUpdate.includes("Web Search Content Ready"));
+  assert.ok(customUpdate.includes("Content fetched for 2/3 URLs"));
+  assert.ok(!/\x1b\[(?:4[0-9]|10[0-7]|48(?:;|:))/u.test(customUpdate));
   assert.ok(!compactTool.includes("Third-party call"));
   toolComponent.updateResult({ content: [{ type: "text", text: "updated result" }], isError: false });
   assert.ok(toolComponent.render(80).join("\n").includes("updated result"));
@@ -448,7 +464,9 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
     type: "click", button: "left", x: 8, y: 1, width: 80, height: toolComponent.render(80).length,
   });
   const expandedTool = toolComponent.render(80).join("\n");
-  assert.ok(expandedTool.includes("Third-party call"));
+  const expandedToolText = expandedTool.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
+  assert.ok(expandedToolText.includes("● Recall Observation"));
+  assert.ok(expandedToolText.includes("│") && expandedToolText.includes("Third-party call"));
   assert.ok(expandedTool.includes("Money saved · Third-party result"));
   assert.ok(!/\x1b\[(?:4[0-9]|10[0-7]|48(?:;|:))/u.test(expandedTool));
 
@@ -457,9 +475,15 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
     type: "click", button: "left", x: 8, y: 2, width: 80, height: compactLines.length,
   });
   const fullThinking = thinkingComponent.render(80).join("\n");
-  assert.ok(fullThinking.includes("Preserve native rendering"));
+  assert.ok(fullThinking.includes("● Thought"));
+  assert.ok(fullThinking.includes("│") && fullThinking.includes("Preserve native rendering"));
   for (const width of [1, 4, 8, 12]) {
-    const lines = [...thinkingComponent.render(width), ...toolComponent.render(width)];
+    const lines = [
+      ...thinkingComponent.render(width),
+      ...toolComponent.render(width),
+      ...infoComponents.flatMap((component) => component.render(width)),
+      ...customComponent.render(width),
+    ];
     assert.ok(lines.every((line) => visibleWidth(line) <= width));
   }
 }
@@ -612,6 +636,7 @@ const patchedSelectionHandler = TuiAltScreen.prototype.handleSelectionMouseEvent
 const patchedMarkdownRenderToken = Markdown.prototype.renderToken;
 const patchedAssistantRender = AssistantMessageComponent.prototype.render;
 const patchedAssistantMouse = AssistantMessageComponent.prototype.handleMouse;
+const patchedCustomMessageRender = CustomMessageComponent.prototype.render;
 const patchedToolRender = ToolExecutionComponent.prototype.render;
 const patchedShowExtensionNotify = InteractiveMode.prototype.showExtensionNotify;
 await emit("session_shutdown");
@@ -619,6 +644,7 @@ assert.equal(Markdown.prototype.handleMouse, undefined);
 assert.notEqual(Markdown.prototype.renderToken, patchedMarkdownRenderToken);
 assert.notEqual(AssistantMessageComponent.prototype.render, patchedAssistantRender);
 assert.notEqual(AssistantMessageComponent.prototype.handleMouse, patchedAssistantMouse);
+assert.notEqual(CustomMessageComponent.prototype.render, patchedCustomMessageRender);
 assert.notEqual(ToolExecutionComponent.prototype.render, patchedToolRender);
 assert.notEqual(InteractiveMode.prototype.showExtensionNotify, patchedShowExtensionNotify);
 assert.notEqual(TuiAltScreen.prototype.handleSelectionMouseEvent, patchedSelectionHandler);

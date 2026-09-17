@@ -6,7 +6,7 @@ A beautiful, polished TUI for the [Pi coding agent](https://pi.dev/).
 
 ## Features
 
-- **Collapsible activity timeline:** instead of filling the conversation with individual calls, all built-in and third-party tools are collected into a single `Running(...)` row while work is in progress and a quiet `Done(...)` row when it finishes. Parent rows count tool calls and thoughts; expanding one reveals ordered tool entries and muted `● Thinking` items, each independently expandable.
+- **Collapsible activity timeline:** instead of filling the conversation with individual calls, all built-in and third-party tools are collected into a single `Running(...)` row while work is in progress and a quiet `Done(...)` row when it finishes. Parent rows count tool calls and thoughts; expanding one reveals ordered tools, `● Thought` entries, and extension updates, with member summaries retained above nested details.
 - **Useful details on demand:** tool-aware summaries keep paths, commands, results, diffs, file previews, and live shell output concise without removing access to the original content.
 - **A cohesive visual finish:** rounded user messages and prompt input, theme-aware colors, a clear Markdown heading hierarchy, cleaner lists, and rounded syntax-highlighted code blocks make the entire TUI feel intentional. In fullscreen, each fenced code block also includes a native-feeling `[Copy]` control.
 
@@ -24,9 +24,9 @@ Pi may warn that built-in tools are being overridden. This is expected: pi-prett
 
 ## Working with tool calls
 
-Click a `Running(...)` or `Done(...)` row to keep it as a parent and reveal tools and muted `● Thinking` entries beneath it. Click an individual tool or thinking child to toggle its complete view, or click the parent again to collapse the whole group. Press `Ctrl+O` at any time to use Pi's global expansion control for all tool output and thinking content.
+Click a `Running(...)` or `Done(...)` row to keep it as a parent and reveal tools, completed `● Thought` entries, and extension updates beneath it. Click an individual tool or thought to reveal nested details without replacing its summary, or click the parent again to collapse the whole group. Press `Ctrl+O` at any time to use Pi's global expansion control for all tool output and thinking content.
 
-Informational extension notifications emitted during an activity group are displayed as unindented footnotes below the complete group, so they stay visible without interrupting its tree. Warnings and errors retain Pi's native immediate presentation.
+Informational extension notifications and displayed custom messages emitted during an activity group appear in chronological order as `◇` update members. They remain hidden with the collapsed parent, do not affect tool/thought counts, and preserve custom-message persistence. Warnings and errors retain Pi's native immediate presentation.
 
 ## Rendering modes
 

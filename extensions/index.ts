@@ -1,6 +1,7 @@
 import {
   AssistantMessageComponent,
   CustomEditor,
+  CustomMessageComponent,
   InteractiveMode,
   ToolExecutionComponent,
   UserMessageComponent,
@@ -98,7 +99,8 @@ export default function prettyTui(pi: ExtensionAPI) {
   const expandedThinkingMembers = new Set<string>();
   const thinkingComponents = new Map<string, any>();
   const activityFallbackThemes = new Map<string, any>();
-  const activityNoticeRegions = new Map<string, { start: number; end: number }>();
+  const activityUpdateComponents = new Map<string, Component>();
+  let activityUpdateSequence = 0;
   const assistantBoundaryKeys = new Set<string>();
   const cleanCompactToolCallIds = new Set<string>();
   const cleanGroupToolCallIds = new Map<string, string[]>();
@@ -220,34 +222,32 @@ export default function prettyTui(pi: ExtensionAPI) {
     };
   };
 
-  const appendActivityNotices = (
+  const humanizeCustomType = (value: string): string =>
+    value
+      .split(/[-_\s]+/u)
+      .filter(Boolean)
+      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(" ") || "Update";
+
+  const renderActivityUpdate = (
     group: ActivityGroup,
     member: ActivityMember,
     width: number,
-    theme: any,
-    lines: string[],
-    force = false,
+    theme = activityGroupTheme(group),
   ): string[] => {
-    if ((!force && group.members[group.members.length - 1]?.id !== member.id) || group.notices.length === 0) {
-      activityNoticeRegions.delete(member.id);
-      return lines;
+    if (renderMode !== "clean" || !activityGroupRevealed(group)) return [];
+    const { prefix, continuation, childWidth } = activityTreeStyle(group, member, width, theme);
+    const title = truncateToWidth(member.updateTitle ?? "Update", Math.max(1, childWidth - 2), "…");
+    const lines = [theme.fg("accent", "◇ ") + theme.fg("toolTitle", theme.bold(title))];
+    if (member.updateContent) {
+      const detailWidth = Math.max(1, childWidth - visibleWidth("  │ "));
+      lines.push(...wrapTextWithAnsi(theme.fg("muted", member.updateContent), detailWidth).map((line) =>
+        theme.fg("dim", "  │ ") + line
+      ));
     }
-    const padding = width > 1 ? " " : "";
-    const contentWidth = Math.max(1, width - visibleWidth(padding));
-    const noticeLines = group.notices.flatMap((notice) => [
-      "",
-      ...wrapTextWithAnsi(theme.fg("dim", notice.message), contentWidth).map((line) =>
-        truncateToWidth(`${padding}${line}`, Math.max(1, width), "")
-      ),
-    ]);
-    const start = lines.length + 1;
-    activityNoticeRegions.set(member.id, { start, end: start + noticeLines.length - 1 });
-    return [...lines, ...noticeLines];
-  };
-
-  const eventHitsActivityNotice = (member: ActivityMember, event: any): boolean => {
-    const region = activityNoticeRegions.get(member.id);
-    return Boolean(region && event.y >= region.start && event.y <= region.end);
+    return lines.map((line, index) =>
+      truncateToWidth((index === 0 ? prefix : continuation) + line, Math.max(1, width), "")
+    );
   };
 
   const saveRenderMode = (mode: PrettyTuiMode) => {
@@ -452,6 +452,68 @@ export default function prettyTui(pi: ExtensionAPI) {
     });
   }
 
+  const customMessageKey = (message: any): string => {
+    if (message?.timestamp !== undefined) return String(message.timestamp);
+    return `${message?.customType ?? "custom"}:${JSON.stringify(message?.content ?? "")}`;
+  };
+
+  const customMessageText = (message: any): string =>
+    typeof message?.content === "string"
+      ? message.content
+      : Array.isArray(message?.content)
+        ? message.content
+          .filter((item: any) => item?.type === "text" && typeof item.text === "string")
+          .map((item: any) => item.text)
+          .join("\n")
+        : "";
+
+  const customMessagePrototype = CustomMessageComponent.prototype as any;
+  const customMessagePatchKey = Symbol.for("pretty-tui.clean-custom-message");
+  if (!customMessagePrototype[customMessagePatchKey]) {
+    const originalCustomRender = customMessagePrototype.render;
+    const originalCustomHandleMouse = customMessagePrototype.handleMouse;
+    const patchedCustomRender = function (this: any, width: number): string[] {
+      const message = this.message;
+      const key = customMessageKey(message);
+      const member = activityTimeline.memberForUpdate(key);
+      const group = member ? activityTimeline.groupForMember(member.id) : undefined;
+      if (renderMode !== "clean" || !member || !group) {
+        return originalCustomRender.call(this, width);
+      }
+      activityUpdateComponents.set(member.id, this);
+      return renderActivityUpdate(group, member, width);
+    };
+    const patchedCustomHandleMouse = function (this: any, event: any) {
+      const member = activityTimeline.memberForUpdate(customMessageKey(this.message));
+      if (renderMode === "clean" && member) return undefined;
+      return originalCustomHandleMouse?.call(this, event);
+    };
+    customMessagePrototype[customMessagePatchKey] = {
+      originalRender: originalCustomRender,
+      patchedRender: patchedCustomRender,
+      originalHandleMouse: originalCustomHandleMouse,
+      patchedHandleMouse: patchedCustomHandleMouse,
+    };
+    customMessagePrototype.render = patchedCustomRender;
+    customMessagePrototype.handleMouse = patchedCustomHandleMouse;
+    pi.on("session_shutdown", () => {
+      const patch = customMessagePrototype[customMessagePatchKey];
+      if (!patch) return;
+      if (patch.patchedRender === customMessagePrototype.render) {
+        customMessagePrototype.render = patch.originalRender;
+      }
+      if (patch.patchedHandleMouse === customMessagePrototype.handleMouse) {
+        customMessagePrototype.handleMouse = patch.originalHandleMouse;
+      }
+      if (
+        customMessagePrototype.render === patch.originalRender &&
+        customMessagePrototype.handleMouse === patch.originalHandleMouse
+      ) {
+        delete customMessagePrototype[customMessagePatchKey];
+      }
+    });
+  }
+
   // Thinking and tools are peers in the transcript-first activity timeline.
   // Assistant components keep Pi's native Markdown renderer, while clean mode
   // projects each thinking run as a compact, independently expandable child.
@@ -555,14 +617,7 @@ export default function prettyTui(pi: ExtensionAPI) {
       const revealed = activityGroupRevealed(group);
       if (!revealed) {
         return position.first
-          ? appendActivityNotices(
-              group,
-              member,
-              width,
-              activityGroupTheme(group),
-              ["", ...renderActivityGroupSummary(group, width, true)],
-              true,
-            )
+          ? ["", ...renderActivityGroupSummary(group, width, true)]
           : [];
       }
 
@@ -585,41 +640,33 @@ export default function prettyTui(pi: ExtensionAPI) {
         cached?.message === message &&
         cached?.theme === groupTheme &&
         cached?.memberCount === group.members.length &&
-        cached?.noticeCount === group.notices.length &&
         cached?.last === position.last
       ) {
         return cached.lines;
       }
-      let contentLines: string[];
+      const stateLabel = this.isStreaming ? "Thinking" : "Thought";
+      const label = truncateToWidth(`● ${stateLabel}`, childWidth, "…");
+      const header = groupTheme
+        ? groupTheme.fg("thinkingText", label)
+        : this.markdownTheme.quote(label);
+      let contentLines: string[] = [header];
       if (expanded) {
-        const nativeLines = originalRender.call(this, childWidth);
-        contentLines = nativeLines[0] === "" ? nativeLines.slice(1) : nativeLines;
-      } else {
-        const label = truncateToWidth("● Thinking", childWidth, "…");
-        contentLines = [groupTheme
-          ? groupTheme.fg("thinkingText", label)
-          : this.markdownTheme.quote(label)];
+        const nativeLines = originalRender.call(this, Math.max(1, childWidth - visibleWidth("  │ ")));
+        const detailLines = nativeLines[0] === "" ? nativeLines.slice(1) : nativeLines;
+        contentLines.push(...detailLines.map((line: string) => groupTheme.fg("dim", "  │ ") + line));
       }
       const decorated = contentLines.map((line, index) =>
         truncateToWidth((index === 0 ? prefix : continuation) + line, Math.max(1, width), "")
       );
-      const memberOutput = position.first
+      const output = position.first
         ? ["", ...renderActivityGroupSummary(group, width), ...decorated]
         : decorated;
-      const output = appendActivityNotices(
-        group,
-        member,
-        width,
-        groupTheme,
-        memberOutput,
-      );
       if (cacheable) {
         this[cleanThinkingRenderCacheKey] = {
           width,
           message,
           theme: groupTheme,
           memberCount: group.members.length,
-          noticeCount: group.notices.length,
           last: position.last,
           lines: output,
         };
@@ -638,7 +685,6 @@ export default function prettyTui(pi: ExtensionAPI) {
       if (!member || !group || group.toolCallIds.length === 0) return undefined;
       const position = activityMemberPosition(group, member);
       const isLeftClick = event.type === "click" && event.button === "left";
-      if (eventHitsActivityNotice(member, event)) return undefined;
       if (!activityGroupRevealed(group)) {
         if (!isLeftClick) return undefined;
         if (position.first) {
@@ -781,11 +827,24 @@ export default function prettyTui(pi: ExtensionAPI) {
       if (renderMode !== "clean" || (type !== undefined && type !== "info")) {
         return originalShowExtensionNotify.call(this, message, type);
       }
-      const notice = activityTimeline.addNotice(message);
-      const group = notice ? activityTimeline.currentGroup() : undefined;
-      if (!notice || !group) {
+      const [firstLine, ...remainingLines] = String(message).split("\n");
+      const member = activityTimeline.addUpdate(
+        `info:${++activityUpdateSequence}`,
+        firstLine || "Info",
+        remainingLines.join("\n"),
+        false,
+      );
+      const group = member ? activityTimeline.groupForMember(member.id) : undefined;
+      if (!member || !group || !this.chatContainer?.addChild) {
         return originalShowExtensionNotify.call(this, message, type);
       }
+      const component: Component = {
+        render: (width: number) => renderActivityUpdate(group, member, width),
+        invalidate() {},
+        handleMouse() { return undefined; },
+      } as Component;
+      activityUpdateComponents.set(member.id, component);
+      this.chatContainer.addChild(component);
       this.ui?.requestRender?.();
     };
 
@@ -1536,11 +1595,18 @@ export default function prettyTui(pi: ExtensionAPI) {
   const renderThirdPartyCompact = (component: any, width: number, theme: any): string[] => {
     const label = component.toolDefinition?.label || toolDisplayName(component.toolName);
     const args = conciseThirdPartyArgs(component.args);
-    const title = `● ${label}${args ? `(${args})` : ""}`;
+    const dotColor = component.result?.isError
+      ? "error"
+      : component.result && !component.isPartial
+        ? "success"
+        : "accent";
+    const title = theme.fg(dotColor, "● ") +
+      theme.fg("toolTitle", theme.bold(label)) +
+      (args ? theme.fg("muted", `(${args})`) : "");
     const result = thirdPartyResultSummary(component);
     const resultColor = component.result?.isError ? "error" : "muted";
     return [
-      theme.fg("accent", theme.bold(truncateToWidth(title, Math.max(1, width), "…"))),
+      truncateToWidth(title, Math.max(1, width), "…"),
       theme.fg(resultColor, truncateToWidth(`  └ ${result}`, Math.max(1, width), "…")),
     ];
   };
@@ -1730,14 +1796,7 @@ export default function prettyTui(pi: ExtensionAPI) {
       const position = activityMemberPosition(group, member);
       if (!activityGroupRevealed(group)) {
         return position.first
-          ? appendActivityNotices(
-              group,
-              member,
-              width,
-              activityGroupTheme(group),
-              ["", ...renderActivityGroupSummary(group, width, true)],
-              true,
-            )
+          ? ["", ...renderActivityGroupSummary(group, width, true)]
           : [];
       }
 
@@ -1764,15 +1823,30 @@ export default function prettyTui(pi: ExtensionAPI) {
       ) {
         decoratedContent = cached.lines;
       } else {
-        const lines = thirdParty && !this.expanded
-          ? renderThirdPartyCompact(this, childWidth, childTheme)
-          : originalToolRender.call(this, childWidth);
-        if (lines.length === 0) return lines;
-
-        const nativeContentLines = lines[0] === "" ? lines.slice(1) : lines;
-        const contentLines = thirdParty && this.expanded
-          ? nativeContentLines.map(stripAnsiBackgrounds)
-          : nativeContentLines;
+        let contentLines: string[];
+        if (thirdParty) {
+          const summaryLines = renderThirdPartyCompact(this, childWidth, childTheme);
+          if (this.expanded) {
+            const detailPrefix = "  │ ";
+            const nativeLines = originalToolRender.call(
+              this,
+              Math.max(1, childWidth - visibleWidth(detailPrefix)),
+            );
+            const nativeContentLines = nativeLines[0] === "" ? nativeLines.slice(1) : nativeLines;
+            contentLines = [
+              summaryLines[0],
+              ...nativeContentLines.map((line: string) =>
+                childTheme.fg("dim", detailPrefix) + stripAnsiBackgrounds(line)
+              ),
+            ];
+          } else {
+            contentLines = summaryLines;
+          }
+        } else {
+          const lines = originalToolRender.call(this, childWidth);
+          if (lines.length === 0) return lines;
+          contentLines = lines[0] === "" ? lines.slice(1) : lines;
+        }
         decoratedContent = contentLines.map((line: string, index: number) =>
           truncateToWidth(
             (index === 0 ? childPrefix : continuation) + line,
@@ -1795,10 +1869,8 @@ export default function prettyTui(pi: ExtensionAPI) {
           };
         }
       }
-      const memberOutput = position.first
-        ? ["", ...renderActivityGroupSummary(group, width), ...decoratedContent]
-        : decoratedContent;
-      return appendActivityNotices(group, member, width, childTheme, memberOutput);
+      if (!position.first) return decoratedContent;
+      return ["", ...renderActivityGroupSummary(group, width), ...decoratedContent];
     };
     const patchedToolHandleMouse = function (this: any, event: any) {
       const member = activityTimeline.memberForTool(this.toolCallId);
@@ -1809,7 +1881,6 @@ export default function prettyTui(pi: ExtensionAPI) {
       }
       const position = activityMemberPosition(group, member);
       const revealed = activityGroupRevealed(group);
-      if (eventHitsActivityNotice(member, event)) return undefined;
 
       if (!revealed && position.first && isLeftClick) {
         revealCleanGroup(group, this.ui);
@@ -2197,7 +2268,8 @@ export default function prettyTui(pi: ExtensionAPI) {
     expandedThinkingMembers.clear();
     thinkingComponents.clear();
     activityFallbackThemes.clear();
-    activityNoticeRegions.clear();
+    activityUpdateComponents.clear();
+    activityUpdateSequence = 0;
     assistantBoundaryKeys.clear();
     knownToolCallIds.clear();
     cleanCompactToolCallIds.clear();
@@ -2402,6 +2474,18 @@ export default function prettyTui(pi: ExtensionAPI) {
         continue;
       }
 
+      if (message.role === "custom") {
+        if (message.display !== false) {
+          activityTimeline.addUpdate(
+            customMessageKey(message),
+            humanizeCustomType(message.customType ?? "update"),
+            customMessageText(message),
+            true,
+          );
+        }
+        continue;
+      }
+
       if (message.role === "assistant") {
         if (messageHasVisibleText(message)) finishGroup();
         const thinking = thinkingText(message);
@@ -2521,6 +2605,15 @@ export default function prettyTui(pi: ExtensionAPI) {
   // message_start runs before Pi adds the user component to the transcript,
   // so settling here keeps the previous parent row above that message.
   pi.on("message_start", (event) => {
+    if (event.message.role === "custom" && event.message.display !== false) {
+      activityTimeline.addUpdate(
+        customMessageKey(event.message),
+        humanizeCustomType(event.message.customType ?? "update"),
+        customMessageText(event.message),
+        true,
+      );
+      return;
+    }
     if (event.message.role !== "user") return;
     finishCleanGroup("done");
     settleLastCleanGroup();
