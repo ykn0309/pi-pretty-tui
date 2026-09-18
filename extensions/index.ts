@@ -264,6 +264,54 @@ export default function prettyTui(pi: ExtensionAPI) {
       : decorated;
   };
 
+  const renderPendingActivityUpdate = (member: ActivityMember, width: number): string[] => {
+    const theme = defaultActivityTheme();
+    const title = truncateToWidth(member.updateTitle ?? "Update", Math.max(1, width - 2), "…");
+    const lines = [theme.fg("accent", "◇ ") + theme.fg("toolTitle", theme.bold(title))];
+    if (member.updateContent) {
+      const detailWidth = Math.max(1, width - visibleWidth("  │ "));
+      const details = wrapTextWithAnsi(theme.fg("muted", member.updateContent), detailWidth);
+      lines.push(...details.map((line, index) =>
+        theme.fg("dim", index === details.length - 1 ? "  └ " : "  │ ") + line
+      ));
+    }
+    return ["", ...lines.map((line) => truncateToWidth(line, Math.max(1, width), ""))];
+  };
+
+  const handleActivityUpdateMouse = (
+    group: ActivityGroup,
+    member: ActivityMember,
+    event: any,
+  ) => {
+    const isLeftClick = event.type === "click" && event.button === "left";
+    if (!isLeftClick || group.toolCallIds.length === 0) return undefined;
+    const position = activityMemberPosition(group, member);
+    if (!activityGroupRevealed(group)) {
+      if (!position.first) return undefined;
+      revealedActivityGroups.add(group.id);
+      for (const toolCallId of group.toolCallIds) cleanCompactToolCallIds.add(toolCallId);
+    } else {
+      const summaryHeight = position.first ? renderActivityGroupSummary(group, event.width).length : 0;
+      if (!position.first || event.y <= 0 || event.y > summaryHeight) return undefined;
+      revealedActivityGroups.delete(group.id);
+      for (const toolCallId of group.toolCallIds) {
+        cleanCompactToolCallIds.delete(toolCallId);
+        const component = cleanToolComponents.get(toolCallId);
+        if (component?.expanded) component.setExpanded(false);
+      }
+      for (const child of group.members) expandedThinkingMembers.delete(child.id);
+    }
+    for (const child of group.members) {
+      if (child.kind === "tool" && child.toolCallId) {
+        cleanToolComponents.get(child.toolCallId)?.updateDisplay?.();
+      } else if (child.kind === "thinking" && child.messageKey) {
+        thinkingComponents.get(child.messageKey)?.invalidate?.();
+      }
+    }
+    currentTui?.requestRender?.();
+    return { handled: true };
+  };
+
   const saveConfig = (nextConfig: Record<string, any>) => {
     config = nextConfig;
     mkdirSync(getAgentDir(), { recursive: true });
@@ -566,10 +614,11 @@ export default function prettyTui(pi: ExtensionAPI) {
         }
       }
       const group = member ? activityTimeline.groupForMember(member.id) : undefined;
-      if (renderMode !== "clean" || !member || !group || group.toolCallIds.length === 0) {
+      if (renderMode !== "clean" || !member || !group) {
         return originalCustomRender.call(this, width);
       }
       activityUpdateComponents.set(member.id, this);
+      if (group.toolCallIds.length === 0) return renderPendingActivityUpdate(member, width);
       const position = activityMemberPosition(group, member);
       if (!activityGroupRevealed(group)) {
         return position.first
@@ -581,36 +630,11 @@ export default function prettyTui(pi: ExtensionAPI) {
     const patchedCustomHandleMouse = function (this: any, event: any) {
       const member = activityTimeline.memberForUpdate(customMessageKey(this.message));
       const group = member ? activityTimeline.groupForMember(member.id) : undefined;
-      if (renderMode !== "clean" || !member || !group || group.toolCallIds.length === 0) {
+      if (renderMode !== "clean" || !member || !group) {
         return originalCustomHandleMouse?.call(this, event);
       }
-      const isLeftClick = event.type === "click" && event.button === "left";
-      if (!isLeftClick) return undefined;
-      const position = activityMemberPosition(group, member);
-      if (!activityGroupRevealed(group)) {
-        if (!position.first) return undefined;
-        revealedActivityGroups.add(group.id);
-        for (const toolCallId of group.toolCallIds) cleanCompactToolCallIds.add(toolCallId);
-      } else {
-        const summaryHeight = position.first ? renderActivityGroupSummary(group, event.width).length : 0;
-        if (!position.first || event.y <= 0 || event.y > summaryHeight) return undefined;
-        revealedActivityGroups.delete(group.id);
-        for (const toolCallId of group.toolCallIds) {
-          cleanCompactToolCallIds.delete(toolCallId);
-          const component = cleanToolComponents.get(toolCallId);
-          if (component?.expanded) component.setExpanded(false);
-        }
-        for (const child of group.members) expandedThinkingMembers.delete(child.id);
-      }
-      for (const child of group.members) {
-        if (child.kind === "tool" && child.toolCallId) {
-          cleanToolComponents.get(child.toolCallId)?.updateDisplay?.();
-        } else if (child.kind === "thinking" && child.messageKey) {
-          thinkingComponents.get(child.messageKey)?.invalidate?.();
-        }
-      }
-      currentTui?.requestRender?.();
-      return { handled: true };
+      if (group.toolCallIds.length === 0) return undefined;
+      return handleActivityUpdateMouse(group, member, event);
     };
     customMessagePrototype[customMessagePatchKey] = {
       originalRender: originalCustomRender,
@@ -1044,20 +1068,28 @@ export default function prettyTui(pi: ExtensionAPI) {
         return originalShowExtensionNotify.call(this, message, type);
       }
       const [firstLine, ...remainingLines] = String(message).split("\n");
-      const member = activityTimeline.addUpdate(
-        `info:${++activityUpdateSequence}`,
-        firstLine || "Info",
-        remainingLines.join("\n"),
-        false,
-      );
-      const group = member ? activityTimeline.groupForMember(member.id) : undefined;
-      if (!member || !group || !this.chatContainer?.addChild) {
+      const updateKey = `info:${++activityUpdateSequence}`;
+      const title = firstLine || "Info";
+      const content = remainingLines.join("\n");
+      const member = activityTimeline.addUpdate(updateKey, title, content, false) ??
+        activityTimeline.addPendingUpdate(updateKey, title, content, false);
+      const group = activityTimeline.groupForMember(member.id);
+      if (!group || !this.chatContainer?.addChild) {
         return originalShowExtensionNotify.call(this, message, type);
       }
       const component: Component = {
-        render: (width: number) => renderActivityUpdate(group, member, width),
+        render: (width: number) => {
+          if (group.toolCallIds.length === 0) return renderPendingActivityUpdate(member, width);
+          const position = activityMemberPosition(group, member);
+          if (!activityGroupRevealed(group)) {
+            return position.first
+              ? ["", ...renderActivityGroupSummary(group, width, true)]
+              : [];
+          }
+          return renderActivityUpdate(group, member, width);
+        },
         invalidate() {},
-        handleMouse() { return undefined; },
+        handleMouse: (event: any) => handleActivityUpdateMouse(group, member, event),
       } as Component;
       activityUpdateComponents.set(member.id, component);
       this.chatContainer.addChild(component);
@@ -1785,7 +1817,18 @@ export default function prettyTui(pi: ExtensionAPI) {
   };
 
   const toolDisplayName = (name: string): string =>
-    name === "ls" ? "List" : name.charAt(0).toUpperCase() + name.slice(1);
+    name === "ls"
+      ? "List"
+      : name
+        .split(/[_-]+/u)
+        .filter(Boolean)
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(" ");
+
+  const toolLabel = (toolName: string, label?: string): string =>
+    !label || label === toolName || /^[a-z0-9_-]+$/u.test(label)
+      ? toolDisplayName(label || toolName)
+      : label;
 
   const conciseThirdPartyArgs = (args: any): string => {
     if (!args || typeof args !== "object" || Array.isArray(args)) return "";
@@ -1826,7 +1869,7 @@ export default function prettyTui(pi: ExtensionAPI) {
   };
 
   const renderThirdPartyCompact = (component: any, width: number, theme: any): string[] => {
-    const label = component.toolDefinition?.label || toolDisplayName(component.toolName);
+    const label = toolLabel(component.toolName, component.toolDefinition?.label);
     const args = conciseThirdPartyArgs(component.args);
     const dotColor = component.result?.isError
       ? "error"
@@ -1985,7 +2028,7 @@ export default function prettyTui(pi: ExtensionAPI) {
         cleanRun.currentToolCallIds.push(this.toolCallId);
       }
       cleanRun.activeToolCallIds.add(this.toolCallId);
-      const displayName = this.toolDefinition?.label || toolDisplayName(this.toolName);
+      const displayName = toolLabel(this.toolName, this.toolDefinition?.label);
       cleanToolNames.set(this.toolCallId, displayName);
       setCleanGroupMembers(this.toolCallId, cleanRun.currentToolCallIds.slice());
       if (typeof this.ui?.requestRender === "function") {
@@ -2017,7 +2060,7 @@ export default function prettyTui(pi: ExtensionAPI) {
       const member = activityTimeline.addTool(this.toolCallId, this.toolName);
       cleanToolNames.set(
         this.toolCallId,
-        this.toolDefinition?.label || toolDisplayName(this.toolName),
+        toolLabel(this.toolName, this.toolDefinition?.label),
       );
       if (this[renderedModeKey] !== renderMode) {
         this[renderedModeKey] = renderMode;
@@ -2257,9 +2300,12 @@ export default function prettyTui(pi: ExtensionAPI) {
     activity = "done",
   ): string => {
     const rawActivityText = typeof activity === "string" ? activity : "done";
-    const activityText = /^thinking(?:\.\.\.)?$/iu.test(rawActivityText.trim())
+    const normalizedActivityText = rawActivityText.trim();
+    const activityText = /^thinking(?:\.\.\.)?$/iu.test(normalizedActivityText)
       ? "Thinking"
-      : rawActivityText;
+      : /^[a-z][a-z0-9_-]*$/u.test(normalizedActivityText) && normalizedActivityText !== "done"
+        ? toolDisplayName(normalizedActivityText)
+        : rawActivityText;
     const countLabel = `${count} tool ${count === 1 ? "call" : "calls"}`;
     const thoughtLabel = thoughtCount > 0
       ? ` · ${thoughtCount} ${thoughtCount === 1 ? "thought" : "thoughts"}`

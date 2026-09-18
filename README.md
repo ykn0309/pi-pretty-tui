@@ -26,7 +26,7 @@ Pi may warn that built-in tools are being overridden. This is expected: pi-prett
 
 Click a `Running(...)` or `Done(...)` row to keep it as a parent and reveal tools, completed `● Thought` entries, and extension updates beneath it. Click an individual tool or thought to reveal nested details without replacing its summary, or click the parent again to collapse the whole group. Press `Ctrl+O` at any time to use Pi's global expansion control for all tool output and thinking content.
 
-Informational extension notifications and displayed custom messages emitted during an activity group appear in chronological order as `◇` update members. A persistent displayed custom message that arrives between a visible response and the next tool turn becomes the first member of that next activity group once it exists; if no safe group appears, it remains on Pi's native path. Updates remain hidden with the collapsed parent, do not affect tool/thought counts, and preserve custom-message persistence. Warnings and errors retain Pi's native immediate presentation.
+Informational extension notifications and displayed custom messages appear in chronological order as `◇` update members. If one arrives before its next tool turn, it stays visible as a standalone update and becomes the first member of that activity group once it exists. Grouped updates remain hidden with the collapsed parent and do not affect tool/thought counts. Displayed custom messages preserve their session persistence, while informational notifications remain runtime-only. Warnings and errors retain Pi's native immediate presentation.
 
 ## Settings and rendering modes
 

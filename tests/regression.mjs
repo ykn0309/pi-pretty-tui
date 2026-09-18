@@ -349,6 +349,45 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
   assert.deepEqual(nativeInfo, ["Standalone info"]);
 }
 
+// An informational notification can arrive before its next tool event. It is
+// visible immediately, then becomes the clickable first member of that group.
+{
+  await emit("session_start", {}, sessionContext([]));
+  const pendingInfoComponents = [];
+  const pendingInfoHost = {
+    ui: { requestRender() {} },
+    chatContainer: { addChild(component) { pendingInfoComponents.push(component); } },
+    showStatus() { assert.fail("pending info should remain extension-rendered"); },
+  };
+  InteractiveMode.prototype.showExtensionNotify.call(
+    pendingInfoHost,
+    "⚡ SoL-Pi · Observation Pack\nMoney saved · 2,770 context tokens avoided",
+    "info",
+  );
+  assert.equal(pendingInfoComponents.length, 1);
+  const standaloneInfo = pendingInfoComponents[0].render(80).join("\n")
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
+  assert.ok(standaloneInfo.includes("SoL-Pi · Observation Pack"));
+  assert.ok(standaloneInfo.includes("Money saved"));
+  await emit("agent_start");
+  await emit("tool_execution_start", { toolName: "bash", toolCallId: "after-pending-info" });
+  const pendingInfoParent = pendingInfoComponents[0].render(80).join("\n")
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
+  assert.ok(pendingInfoParent.includes("Running("));
+  assert.ok(pendingInfoParent.includes("· Bash)"));
+  assert.ok(!pendingInfoParent.includes("· bash)"));
+  assert.ok(!pendingInfoParent.includes("Money saved"));
+  pendingInfoComponents[0].handleMouse({
+    type: "click", button: "left", x: 1, y: 1, width: 80, height: pendingInfoComponents[0].render(80).length,
+  });
+  const groupedInfo = pendingInfoComponents[0].render(80).join("\n")
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
+  assert.ok(groupedInfo.includes("SoL-Pi · Observation Pack"));
+  assert.ok(groupedInfo.includes("Money saved"));
+  await emit("tool_execution_end", { toolName: "bash", toolCallId: "after-pending-info", isError: false });
+  await emit("agent_settled");
+}
+
 // A final assistant message may contain both thinking and visible answer text.
 // Its Thought remains in the preceding group without retaining Pi's native
 // Thinking MouseRegion or hiding the visible response.
