@@ -142,6 +142,14 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
     timeline.groups()[1].members.map((member) => member.kind),
     ["thinking", "tool", "update"],
   );
+  timeline.boundary();
+  timeline.addPendingUpdate("pending-update", "Content Ready", "Fetched", true);
+  timeline.addThinking("m3", "Use fetched content");
+  timeline.addTool("after-pending-update", "web_search");
+  assert.deepEqual(
+    timeline.groups()[2].members.map((member) => member.kind),
+    ["update", "thinking", "tool"],
+  );
   assert.equal(assistantSystemBoundary({ role: "assistant", stopReason: "error", content: [] }), true);
   assert.equal(assistantSystemBoundary({ role: "assistant", stopReason: "toolUse", content: [] }), false);
 }
@@ -448,6 +456,52 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
   const rebuildingText = rebuildingComponent.render(80).join("\n")
     .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
   assert.ok(rebuildingText.includes("Visible answer during rebuild"));
+}
+
+// A displayed custom message arriving after visible text can become the first
+// chronological member of the next tool group instead of remaining a purple
+// native block.
+{
+  const before = assistant("27", null, [{ id: "before-pending-update", name: "web_search" }]);
+  const visibleBoundary = assistant("29", "28", [], "Initial answer");
+  const pendingCustomEntry = {
+    type: "custom_message",
+    id: "30",
+    parentId: "29",
+    timestamp: "2026-01-01T00:00:30.000Z",
+    customType: "web-search-content-ready",
+    content: "Content fetched for the next turn",
+    display: true,
+  };
+  const after = assistant("31", "30", [{ id: "after-pending-update", name: "web_search" }]);
+  after.message.content.unshift({ type: "thinking", thinking: "Use newly fetched content" });
+  await emit("session_start", {}, sessionContext([
+    before,
+    result("28", "27", "before-pending-update"),
+    visibleBoundary,
+    pendingCustomEntry,
+    after,
+    result("32", "31", "after-pending-update"),
+  ]));
+  const pendingCustomMessage = {
+    role: "custom",
+    timestamp: pendingCustomEntry.timestamp,
+    customType: pendingCustomEntry.customType,
+    content: pendingCustomEntry.content,
+    display: true,
+  };
+  const pendingCustomComponent = new CustomMessageComponent(pendingCustomMessage);
+  const pendingParent = pendingCustomComponent.render(80).join("\n")
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
+  assert.ok(pendingParent.includes("Done("));
+  assert.ok(!pendingParent.includes("[web-search-content-ready]"));
+  pendingCustomComponent.handleMouse({
+    type: "click", button: "left", x: 1, y: 1, width: 80, height: pendingCustomComponent.render(80).length,
+  });
+  const pendingCustomText = pendingCustomComponent.render(80).join("\n")
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
+  assert.ok(pendingCustomText.includes("Web Search Content Ready"));
+  assert.ok(pendingCustomText.includes("Content fetched for the next turn"));
 }
 
 // Persisted custom_message entries restore as ordered activity updates instead

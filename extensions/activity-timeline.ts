@@ -122,6 +122,32 @@ export class ActivityTimeline {
     return this.addUpdateToGroup(this.currentGroupId, updateKey, title, content, persistent);
   }
 
+  addPendingUpdate(
+    updateKey: string,
+    title: string,
+    content: string,
+    persistent: boolean,
+  ): ActivityMember {
+    const existingId = this.updateMembers.get(updateKey);
+    if (existingId) return this.member(existingId)!;
+    const group = this.ensureCurrentGroup();
+    return this.appendUpdate(group, updateKey, title, content, persistent);
+  }
+
+  addUpdateToGroupStart(
+    groupId: string,
+    updateKey: string,
+    title: string,
+    content: string,
+    persistent: boolean,
+  ): ActivityMember | undefined {
+    const existingId = this.updateMembers.get(updateKey);
+    if (existingId) return this.member(existingId);
+    const group = this.groupsById.get(groupId);
+    if (!group || group.toolCallIds.length === 0) return undefined;
+    return this.appendUpdate(group, updateKey, title, content, persistent, true);
+  }
+
   addUpdateToGroup(
     groupId: string,
     updateKey: string,
@@ -133,6 +159,17 @@ export class ActivityTimeline {
     if (existingId) return this.member(existingId);
     const group = this.groupsById.get(groupId);
     if (!group || group.toolCallIds.length === 0) return undefined;
+    return this.appendUpdate(group, updateKey, title, content, persistent);
+  }
+
+  private appendUpdate(
+    group: ActivityGroup,
+    updateKey: string,
+    title: string,
+    content: string,
+    persistent: boolean,
+    atStart = false,
+  ): ActivityMember {
     const member: ActivityMember = {
       id: updateMemberId(updateKey),
       kind: "update",
@@ -141,7 +178,8 @@ export class ActivityTimeline {
       updateContent: content.trim(),
       persistent,
     };
-    group.members.push(member);
+    if (atStart) group.members.unshift(member);
+    else group.members.push(member);
     this.membersById.set(member.id, member);
     this.memberGroups.set(member.id, group.id);
     this.updateMembers.set(updateKey, member.id);

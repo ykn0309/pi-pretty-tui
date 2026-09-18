@@ -102,6 +102,7 @@ export default function prettyTui(pi: ExtensionAPI) {
   const activityFallbackThemes = new Map<string, any>();
   const activityUpdateComponents = new Map<string, Component>();
   const customUpdateToolHints = new Map<string, string>();
+  const customUpdateBeforeToolHints = new Set<string>();
   let activityUpdateSequence = 0;
   const assistantBoundaryKeys = new Set<string>();
   const cleanCompactToolCallIds = new Set<string>();
@@ -254,9 +255,13 @@ export default function prettyTui(pi: ExtensionAPI) {
         theme.fg("dim", index === detailLines.length - 1 ? "  └ " : "  │ ") + line
       ));
     }
-    return lines.map((line, index) =>
+    const decorated = lines.map((line, index) =>
       truncateToWidth((index === 0 ? prefix : continuation) + line, Math.max(1, width), "")
     );
+    const position = activityMemberPosition(group, member);
+    return position.first
+      ? ["", ...renderActivityGroupSummary(group, width), ...decorated]
+      : decorated;
   };
 
   const saveConfig = (nextConfig: Record<string, any>) => {
@@ -525,6 +530,14 @@ export default function prettyTui(pi: ExtensionAPI) {
           .join("\n")
         : "";
 
+  const addPersistentActivityUpdate = (message: any): ActivityMember => {
+    const key = customMessageKey(message);
+    const title = humanizeCustomType(message?.customType ?? "update");
+    const content = customMessageText(message);
+    return activityTimeline.addUpdate(key, title, content, true) ??
+      activityTimeline.addPendingUpdate(key, title, content, true);
+  };
+
   const customMessagePrototype = CustomMessageComponent.prototype as any;
   const customMessagePatchKey = Symbol.for("pretty-tui.clean-custom-message");
   if (!customMessagePrototype[customMessagePatchKey]) {
@@ -540,7 +553,10 @@ export default function prettyTui(pi: ExtensionAPI) {
           ? activityTimeline.groupForTool(hintedToolCallId)
           : undefined;
         if (hintedGroup) {
-          member = activityTimeline.addUpdateToGroup(
+          const attach = customUpdateBeforeToolHints.has(key)
+            ? activityTimeline.addUpdateToGroupStart.bind(activityTimeline)
+            : activityTimeline.addUpdateToGroup.bind(activityTimeline);
+          member = attach(
             hintedGroup.id,
             key,
             humanizeCustomType(message?.customType ?? "update"),
@@ -550,16 +566,51 @@ export default function prettyTui(pi: ExtensionAPI) {
         }
       }
       const group = member ? activityTimeline.groupForMember(member.id) : undefined;
-      if (renderMode !== "clean" || !member || !group) {
+      if (renderMode !== "clean" || !member || !group || group.toolCallIds.length === 0) {
         return originalCustomRender.call(this, width);
       }
       activityUpdateComponents.set(member.id, this);
+      const position = activityMemberPosition(group, member);
+      if (!activityGroupRevealed(group)) {
+        return position.first
+          ? ["", ...renderActivityGroupSummary(group, width, true)]
+          : [];
+      }
       return renderActivityUpdate(group, member, width);
     };
     const patchedCustomHandleMouse = function (this: any, event: any) {
       const member = activityTimeline.memberForUpdate(customMessageKey(this.message));
-      if (renderMode === "clean" && member) return undefined;
-      return originalCustomHandleMouse?.call(this, event);
+      const group = member ? activityTimeline.groupForMember(member.id) : undefined;
+      if (renderMode !== "clean" || !member || !group || group.toolCallIds.length === 0) {
+        return originalCustomHandleMouse?.call(this, event);
+      }
+      const isLeftClick = event.type === "click" && event.button === "left";
+      if (!isLeftClick) return undefined;
+      const position = activityMemberPosition(group, member);
+      if (!activityGroupRevealed(group)) {
+        if (!position.first) return undefined;
+        revealedActivityGroups.add(group.id);
+        for (const toolCallId of group.toolCallIds) cleanCompactToolCallIds.add(toolCallId);
+      } else {
+        const summaryHeight = position.first ? renderActivityGroupSummary(group, event.width).length : 0;
+        if (!position.first || event.y <= 0 || event.y > summaryHeight) return undefined;
+        revealedActivityGroups.delete(group.id);
+        for (const toolCallId of group.toolCallIds) {
+          cleanCompactToolCallIds.delete(toolCallId);
+          const component = cleanToolComponents.get(toolCallId);
+          if (component?.expanded) component.setExpanded(false);
+        }
+        for (const child of group.members) expandedThinkingMembers.delete(child.id);
+      }
+      for (const child of group.members) {
+        if (child.kind === "tool" && child.toolCallId) {
+          cleanToolComponents.get(child.toolCallId)?.updateDisplay?.();
+        } else if (child.kind === "thinking" && child.messageKey) {
+          thinkingComponents.get(child.messageKey)?.invalidate?.();
+        }
+      }
+      currentTui?.requestRender?.();
+      return { handled: true };
     };
     customMessagePrototype[customMessagePatchKey] = {
       originalRender: originalCustomRender,
@@ -895,15 +946,20 @@ export default function prettyTui(pi: ExtensionAPI) {
 
   const indexDisplayedCustomUpdateHints = (entries: any[]) => {
     customUpdateToolHints.clear();
+    customUpdateBeforeToolHints.clear();
     let lastToolCallId: string | undefined;
+    let pendingCustomKeys: string[] = [];
     for (const entry of entries) {
       if (entry?.type === "compaction") {
         lastToolCallId = undefined;
+        pendingCustomKeys = [];
         continue;
       }
       if (entry?.type === "custom_message") {
-        if (entry.display !== false && lastToolCallId) {
-          customUpdateToolHints.set(customMessageKey(entry), lastToolCallId);
+        if (entry.display !== false) {
+          const key = customMessageKey(entry);
+          if (lastToolCallId) customUpdateToolHints.set(key, lastToolCallId);
+          else pendingCustomKeys.push(key);
         }
         continue;
       }
@@ -911,15 +967,24 @@ export default function prettyTui(pi: ExtensionAPI) {
       const message = entry.message;
       if (message?.role === "user") {
         lastToolCallId = undefined;
+        pendingCustomKeys = [];
         continue;
       }
       if (message?.role === "assistant") {
+        const toolCalls = (Array.isArray(message.content) ? message.content : [])
+          .filter((item: any) => item?.type === "toolCall" && item.id);
+        if (toolCalls.length > 0 && pendingCustomKeys.length > 0) {
+          for (const key of pendingCustomKeys) {
+            customUpdateToolHints.set(key, toolCalls[0].id);
+            customUpdateBeforeToolHints.add(key);
+          }
+          pendingCustomKeys = [];
+        }
         if (visibleAssistantText(message) || assistantSystemBoundary(message)) {
           lastToolCallId = undefined;
+          pendingCustomKeys = [];
         }
-        for (const item of Array.isArray(message.content) ? message.content : []) {
-          if (item?.type === "toolCall" && item.id) lastToolCallId = item.id;
-        }
+        for (const item of toolCalls) lastToolCallId = item.id;
         continue;
       }
       if (message?.role === "toolResult" && message.toolCallId) {
@@ -2451,6 +2516,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     activityFallbackThemes.clear();
     activityUpdateComponents.clear();
     customUpdateToolHints.clear();
+    customUpdateBeforeToolHints.clear();
     activityUpdateSequence = 0;
     assistantBoundaryKeys.clear();
     knownToolCallIds.clear();
@@ -2648,14 +2714,7 @@ export default function prettyTui(pi: ExtensionAPI) {
       }
 
       if (entry.type === "custom_message") {
-        if (entry.display !== false) {
-          activityTimeline.addUpdate(
-            customMessageKey(entry),
-            humanizeCustomType(entry.customType ?? "update"),
-            customMessageText(entry),
-            true,
-          );
-        }
+        if (entry.display !== false) addPersistentActivityUpdate(entry);
         continue;
       }
 
@@ -2669,14 +2728,7 @@ export default function prettyTui(pi: ExtensionAPI) {
       }
 
       if (message.role === "custom") {
-        if (message.display !== false) {
-          activityTimeline.addUpdate(
-            customMessageKey(message),
-            humanizeCustomType(message.customType ?? "update"),
-            customMessageText(message),
-            true,
-          );
-        }
+        if (message.display !== false) addPersistentActivityUpdate(message);
         continue;
       }
 
@@ -2800,12 +2852,7 @@ export default function prettyTui(pi: ExtensionAPI) {
   // so settling here keeps the previous parent row above that message.
   pi.on("message_start", (event) => {
     if (event.message.role === "custom" && event.message.display !== false) {
-      activityTimeline.addUpdate(
-        customMessageKey(event.message),
-        humanizeCustomType(event.message.customType ?? "update"),
-        customMessageText(event.message),
-        true,
-      );
+      addPersistentActivityUpdate(event.message);
       return;
     }
     if (event.message.role !== "user") return;
