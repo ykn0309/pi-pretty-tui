@@ -374,8 +374,8 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
   const pendingInfoParent = pendingInfoComponents[0].render(80).join("\n")
     .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
   assert.ok(pendingInfoParent.includes("Running("));
-  assert.ok(pendingInfoParent.includes("· Bash)"));
-  assert.ok(!pendingInfoParent.includes("· bash)"));
+  assert.ok(pendingInfoParent.includes("· bash)"));
+  assert.ok(!pendingInfoParent.includes("· Bash)"));
   assert.ok(!pendingInfoParent.includes("Money saved"));
   pendingInfoComponents[0].handleMouse({
     type: "click", button: "left", x: 1, y: 1, width: 80, height: pendingInfoComponents[0].render(80).length,
@@ -435,7 +435,7 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
   });
   const compactMixed = mixedComponent.render(80).join("\n")
     .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
-  assert.ok(compactMixed.includes("● Thought"));
+  assert.ok(compactMixed.includes("● thought"));
   assert.ok(compactMixed.includes("Visible final answer"));
   assert.ok(!compactMixed.includes("Thinking..."));
   const cachedMixed = mixedComponent.render(80).join("\n")
@@ -700,7 +700,7 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
   const infoUpdate = infoComponents.map((component) => component.render(80).join("\n")).join("\n");
   const customUpdate = customComponent.render(80).join("\n");
   const compactThinkingText = compactThinking.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
-  assert.ok(compactThinkingText.includes("├─") && compactThinkingText.includes("● Thought"));
+  assert.ok(compactThinkingText.includes("├─") && compactThinkingText.includes("● thought"));
   assert.ok(!compactThinking.includes("Inspect compatibility"));
   const compactToolText = compactTool.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
   const infoUpdateText = infoUpdate.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
@@ -739,7 +739,7 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
   });
   const fullThinking = thinkingComponent.render(80).join("\n");
   const fullThinkingText = fullThinking.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
-  assert.ok(fullThinkingText.includes("● Thought"));
+  assert.ok(fullThinkingText.includes("● thought"));
   assert.ok(fullThinking.includes("│") && fullThinking.includes("Preserve native rendering"));
   assert.ok(fullThinking.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").includes("└ Preserve native rendering"));
   assert.ok(!fullThinking.includes("Thinking..."));
@@ -747,7 +747,7 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
     type: "click", button: "left", x: 8, y: 2, width: 80, height: thinkingComponent.render(80).length,
   });
   const reCollapsedThinking = thinkingComponent.render(80).join("\n");
-  assert.ok(reCollapsedThinking.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").includes("● Thought"));
+  assert.ok(reCollapsedThinking.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").includes("● thought"));
   assert.ok(!reCollapsedThinking.includes("Preserve native rendering"));
   thinkingComponent.handleMouse({
     type: "click", button: "left", x: 1, y: 1, width: 80, height: thinkingComponent.render(80).length,
@@ -755,7 +755,7 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
   const reCollapsedParent = thinkingComponent.render(80).join("\n")
     .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
   assert.match(reCollapsedParent, /(?:Running|Done)\(/);
-  assert.ok(!reCollapsedParent.includes("● Thought"));
+  assert.ok(!reCollapsedParent.includes("● thought"));
   for (const width of [1, 4, 8, 12]) {
     const lines = [
       ...thinkingComponent.render(width),
