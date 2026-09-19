@@ -26,7 +26,7 @@ Pi may warn that built-in tools are being overridden. This is expected: pi-prett
 
 Click a `Running(...)` or `Done(...)` row to keep it as a parent and reveal tools, completed `● thought` entries, and extension updates beneath it. Click an individual tool or thought to reveal nested details without replacing its summary, or click the parent again to collapse the whole group. Press `Ctrl+O` at any time to use Pi's global expansion control for all tool output and thinking content. Tool names use each definition's `label` verbatim, falling back to its raw `name`; pi-pretty-tui does not rename or title-case them.
 
-Informational extension notifications and displayed custom messages appear in chronological order as `◇` update members. If one arrives before its next tool turn, it stays visible as a standalone update and becomes the first member of that activity group once it exists. Grouped updates remain hidden with the collapsed parent and do not affect tool/thought counts. Displayed custom messages preserve their session persistence, while informational notifications remain runtime-only. Warnings and errors retain Pi's native immediate presentation.
+Informational extension notifications and displayed custom messages without their own renderer appear in chronological order as `◇` update members. If one arrives before its next tool turn, it stays visible as a standalone update and becomes the first member of that activity group once it exists. Grouped updates remain hidden with the collapsed parent and do not affect tool/thought counts. Displayed custom messages preserve their session persistence, while informational notifications remain runtime-only. Custom messages with a registered semantic renderer remain native standalone transcript blocks, so extensions such as background-task managers keep their concise status presentation. Warnings and errors retain Pi's native immediate presentation.
 
 ## Settings and rendering modes
 
@@ -36,7 +36,7 @@ The extension supports three persistent rendering modes: `clean` (default), `com
 
 ## Copy code blocks
 
-In fullscreen TUI mode, fenced Markdown code blocks include a clickable `[Copy]` control in the top rule:
+In fullscreen TUI mode, fenced Markdown code blocks in user and assistant transcript messages include a clickable `[Copy]` control in the top rule:
 
 ```sh
 pi --tui-mode fullscreen
@@ -57,7 +57,7 @@ The suite covers live and restored activity timelines, system/steering/compactio
 
 ## Compatibility notice
 
-Tool rendering uses Pi's documented extension APIs. Thinking visibility and active-tool state follow Pi's built-in expansion and execution transitions through its exported interactive components. Framing native user messages, rounding the native prompt editor, changing unordered-list markers, and enhancing fenced code blocks require reload-safe runtime patches because Pi does not currently expose public renderer hooks for those presentation details. Markdown parsing, syntax highlighting, and terminal semantic zones remain handled by Pi.
+Tool rendering uses Pi's documented extension APIs. Thinking visibility and active-tool state follow Pi's built-in expansion and execution transitions through its exported interactive components. Framing native user messages, rounding the native prompt editor, changing unordered-list markers, and enhancing fenced code blocks require reload-safe runtime patches because Pi does not currently expose public renderer hooks for those presentation details. Markdown enhancements are activated only while rendering user and assistant messages in the main transcript; Markdown created by extension overlays keeps Pi's native layout. Markdown parsing, syntax highlighting, and terminal semantic zones remain handled by Pi.
 
 No Pi source files are modified. Runtime patches are removed during session shutdown, but a future Pi release may require this extension to be updated.
 

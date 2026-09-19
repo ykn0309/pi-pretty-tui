@@ -222,6 +222,25 @@ export class ActivityTimeline {
     return memberId ? this.member(memberId) : undefined;
   }
 
+  removeUpdate(updateKey: string): boolean {
+    const memberId = this.updateMembers.get(updateKey);
+    if (!memberId) return false;
+    const groupId = this.memberGroups.get(memberId);
+    const group = groupId ? this.groupsById.get(groupId) : undefined;
+    if (group) {
+      const index = group.members.findIndex((member) => member.id === memberId);
+      if (index >= 0) group.members.splice(index, 1);
+      if (group.members.length === 0) {
+        this.groupsById.delete(group.id);
+        if (this.currentGroupId === group.id) this.currentGroupId = undefined;
+      }
+    }
+    this.updateMembers.delete(updateKey);
+    this.memberGroups.delete(memberId);
+    this.membersById.delete(memberId);
+    return true;
+  }
+
   groupForTool(toolCallId: string): ActivityGroup | undefined {
     const member = this.memberForTool(toolCallId);
     return member ? this.groupForMember(member.id) : undefined;

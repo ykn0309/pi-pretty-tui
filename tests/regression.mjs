@@ -543,6 +543,63 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
   assert.ok(pendingCustomText.includes("Content fetched for the next turn"));
 }
 
+// Displayed custom messages with a registered semantic renderer remain native
+// standalone blocks and release timeline ownership before the next tool row.
+{
+  const semanticEntry = {
+    type: "custom_message",
+    id: "34",
+    parentId: null,
+    timestamp: "2026-01-01T00:00:34.000Z",
+    customType: "background-task-notification",
+    content: "<background-task-notification>model payload</background-task-notification>",
+    display: true,
+  };
+  const semanticToolCall = assistant("35", "34", [{ id: "semantic-next-tool", name: "read" }]);
+  await emit("session_start", {}, sessionContext([
+    semanticEntry,
+    semanticToolCall,
+    result("36", "35", "semantic-next-tool"),
+  ]));
+  let semanticMouseCalls = 0;
+  const semanticRenderer = () => ({
+    render: () => ["[bg completed] compatibility test"],
+    invalidate() {},
+    handleMouse: () => {
+      semanticMouseCalls++;
+      return { handled: true };
+    },
+  });
+  const semanticMessage = {
+    role: "custom",
+    timestamp: semanticEntry.timestamp,
+    customType: semanticEntry.customType,
+    content: semanticEntry.content,
+    display: true,
+  };
+  const semanticComponent = new CustomMessageComponent(semanticMessage, semanticRenderer);
+  const semanticText = semanticComponent.render(80).join("\n");
+  assert.ok(semanticText.includes("[bg completed] compatibility test"));
+  assert.ok(!semanticText.includes("model payload"));
+  assert.equal(semanticComponent.handleMouse({
+    type: "click", button: "left", x: 1, y: 1, width: 80, height: 2,
+  })?.handled, true);
+  assert.equal(semanticMouseCalls, 1);
+
+  const semanticTool = new ToolExecutionComponent(
+    "read",
+    "semantic-next-tool",
+    { path: "semantic.txt" },
+    undefined,
+    { renderShell: "self", renderCall: () => new Text("semantic tool", 0, 0) },
+    { requestRender() {} },
+    process.cwd(),
+  );
+  const semanticToolText = semanticTool.render(80).join("\n")
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
+  assert.ok(semanticToolText.includes("Done("));
+}
+
 // Persisted custom_message entries restore as ordered activity updates instead
 // of falling back to Pi's purple CustomMessage box.
 {
@@ -791,6 +848,34 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
     codeBlockBorder: (text) => `\x1b[90m${text}\x1b[39m`,
     highlightCode: (code) => code.split("\n"),
   }, { get: (target, key) => target[key] ?? ((text) => text) });
+  let transcriptMarkdownTimestamp = 60_000;
+  const transcriptMarkdownFixture = (
+    source,
+    theme = markdownTheme,
+    paddingX = 0,
+    paddingY = 0,
+    defaultTextStyle = undefined,
+  ) => {
+    const message = {
+      role: "assistant",
+      timestamp: transcriptMarkdownTimestamp++,
+      stopReason: "stop",
+      content: [{ type: "text", text: "placeholder" }],
+    };
+    const component = new AssistantMessageComponent(message);
+    const markdown = new Markdown(source, paddingX, paddingY, theme, defaultTextStyle);
+    component.contentContainer.clear();
+    component.contentContainer.addChild(markdown);
+    return {
+      component,
+      markdown,
+      render: (width) => component.render(width),
+      handleMouse: (event) => component.handleMouse(event),
+    };
+  };
+  const stripControls = (line) => line
+    .replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "")
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
 
   const headingCases = [
     ["# One", ["╔═════╗", "║ One ║", "╚═════╝"]],
@@ -801,15 +886,13 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
     ["###### Six", ["Six"]],
   ];
   for (const [source, expected] of headingCases) {
-    const rendered = new Markdown(source, 0, 0, markdownTheme).render(20);
-    const unstyled = rendered.map((line) =>
-      line.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").trimEnd(),
-    );
+    const rendered = transcriptMarkdownFixture(source).render(20);
+    const unstyled = rendered.map((line) => stripControls(line).trimEnd());
     assert.deepEqual(unstyled, expected);
     assert.ok(rendered.every((line) => visibleWidth(line) <= 20));
   }
-  const primaryHeading = new Markdown("# Primary", 0, 0, markdownTheme).render(20);
-  const secondaryHeading = new Markdown("## Secondary", 0, 0, markdownTheme).render(20);
+  const primaryHeading = transcriptMarkdownFixture("# Primary").render(20);
+  const secondaryHeading = transcriptMarkdownFixture("## Secondary").render(20);
   assert.ok(primaryHeading.every((line) => !line.includes("\x1b[7m")));
   assert.ok(primaryHeading[1].includes("\x1b[4m"));
   assert.ok(secondaryHeading[0].includes("\x1b[48;5;94m"));
@@ -819,23 +902,29 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
     ...markdownTheme,
     heading: (text) => `\x1b[38;2;154;115;38m${text}\x1b[39m`,
   };
-  const lightSecondaryHeading = new Markdown(
+  const lightSecondaryHeading = transcriptMarkdownFixture(
     "## Light",
-    0,
-    0,
     lightMarkdownTheme,
+    0,
+    0,
     { color: (text) => `\x1b[38;2;31;35;40m${text}\x1b[39m` },
   ).render(20);
   assert.ok(lightSecondaryHeading[0].includes("\x1b[107m"));
   assert.ok(lightSecondaryHeading[0].includes("\x1b[7m"));
   assert.ok(!lightSecondaryHeading[0].includes("\x1b[48;5;94m"));
-  const sixthHeading = new Markdown("###### Readable", 0, 0, markdownTheme).render(20);
+  const sixthHeading = transcriptMarkdownFixture("###### Readable").render(20);
   assert.ok(sixthHeading[0].includes("\x1b[3m") && sixthHeading[0].includes("\x1b[90m"));
-  const narrowHeading = new Markdown("# Narrow heading", 0, 0, markdownTheme).render(5);
+  const narrowHeading = transcriptMarkdownFixture("# Narrow heading").render(5);
   assert.ok(narrowHeading.every((line) => visibleWidth(line) <= 5));
 
-  const markdown = new Markdown("```ts\nconst a = 1;\n```\n\n~~~json\n{\"ok\":true}\n~~~", 2, 1, markdownTheme);
-  const lines = markdown.render(42);
+  const markdownFixture = transcriptMarkdownFixture(
+    "```ts\nconst a = 1;\n```\n\n~~~json\n{\"ok\":true}\n~~~",
+    markdownTheme,
+    2,
+    1,
+  );
+  const { markdown } = markdownFixture;
+  const lines = markdownFixture.render(42);
   const plain = lines.map((line) => line.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, ""));
   const headers = plain.map((line, y) => ({ line, y })).filter(({ line }) => line.includes("[Copy]"));
   assert.equal(headers.length, 2);
@@ -844,10 +933,12 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
   assert.ok(plain.some((line) => line.trimStart().startsWith("╰─")));
   for (const { line, y } of headers) {
     const x = line.indexOf("[Copy]") + 1;
+    // Fullscreen layout hit-testing can dispatch directly to the Markdown leaf,
+    // bypassing AssistantMessageComponent.handleMouse entirely.
     assert.equal(markdown.handleMouse({ type: "press", button: "left", x, y, width: 42, height: lines.length })?.handled, true);
   }
   const firstCopyX = headers[0].line.indexOf("[Copy]") + 1;
-  assert.equal(markdown.handleMouse({
+  assert.equal(markdownFixture.handleMouse({
     type: "click",
     button: "left",
     x: firstCopyX,
@@ -925,7 +1016,9 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
 
   assert.ok(lines.every((line) => visibleWidth(line) <= 42));
   for (const width of [1, 4, 7, 8, 17, 18, 24]) {
-    const narrow = new Markdown("```sh\necho 12345678901234567890\n```", 0, 0, markdownTheme).render(width);
+    const narrow = transcriptMarkdownFixture(
+      "```sh\necho 12345678901234567890\n```",
+    ).render(width);
     assert.ok(narrow.every((line) => visibleWidth(line) <= width));
     const hasCopy = narrow.some((line) =>
       line.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").includes("[Copy]"),
@@ -933,13 +1026,22 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
     assert.equal(hasCopy, width >= 18);
   }
   markdown.setText("updated");
+  markdownFixture.render(42);
   const staleX = headers[0].line.indexOf("[Copy]") + 1;
-  assert.equal(markdown.handleMouse({ type: "press", button: "left", x: staleX, y: headers[0].y, width: 42, height: lines.length })?.handled, undefined);
+  assert.equal(markdownFixture.handleMouse({ type: "press", button: "left", x: staleX, y: headers[0].y, width: 42, height: lines.length })?.handled, undefined);
+
+  // Markdown rendered outside the main transcript stays native even in
+  // fullscreen mode, matching plugin overlays such as ask_user_question.
+  const overlayMarkdown = new Markdown("# Overlay\n\n```ts\nconst native = true;\n```", 0, 0, markdownTheme);
+  const overlayLines = overlayMarkdown.render(30).map((line) => stripControls(line).trimEnd());
+  assert.deepEqual(overlayLines.slice(0, 2), ["Overlay", ""]);
+  assert.ok(overlayLines.some((line) => line.startsWith("```ts")));
+  assert.ok(overlayLines.every((line) => !line.includes("[Copy]") && !line.includes("╭─")));
 
   try {
     InteractiveMode.prototype.renderSessionEntries.call({ ui: { mode: "regular" } }, []);
   } catch {}
-  const regular = new Markdown("```sh\necho regular\n```", 0, 0, markdownTheme).render(30);
+  const regular = transcriptMarkdownFixture("```sh\necho regular\n```").render(30);
   assert.ok(regular.every((line) => !line.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").includes("[Copy]")));
 }
 

@@ -415,6 +415,20 @@ export default function prettyTui(pi: ExtensionAPI) {
   // render patches or override built-in tools until the next enabled reload.
   if (!activeForSession) return;
 
+  // Markdown enhancements are active only while pi-pretty-tui renders the main
+  // conversation transcript. Plugin overlays also use Pi's Markdown class, so
+  // a global always-on prototype patch would leak transcript styling into them.
+  let transcriptMarkdownDepth = 0;
+  const withTranscriptMarkdown = <T>(callback: () => T): T => {
+    transcriptMarkdownDepth++;
+    try {
+      return callback();
+    } finally {
+      transcriptMarkdownDepth--;
+    }
+  };
+  const transcriptMarkdownActive = () => transcriptMarkdownDepth > 0;
+
   // Give Pi's main prompt editor a complete rounded frame. Render the native
   // editor at a two-column narrower width so cursor layout, wrapping, IME, and
   // autocomplete remain native, then add one themed border column per side.
@@ -525,11 +539,34 @@ export default function prettyTui(pi: ExtensionAPI) {
           const top = border(topStart + markdownTheme.bold(title) + topTail + "╮");
           const bottom = border("╰" + "─".repeat(Math.max(0, frameWidth - 2)) + "╯");
           const contentWidth = Math.max(1, frameWidth - 4);
-          const body = content.render(contentWidth).map((line: string) => {
+          const body = withTranscriptMarkdown(() => content.render(contentWidth)).map((line: string) => {
             const padding = " ".repeat(Math.max(0, contentWidth - visibleWidth(line)));
             return border("│ ") + line + padding + border(" │");
           });
           return [top, ...body, bottom].map((line: string) => outer + paintBackground(line));
+        },
+        handleMouse(event: any) {
+          if (!content.handleMouse) return undefined;
+          const sidePad = Math.min(outputPad, Math.max(0, Math.floor((event.width - 1) / 2)));
+          const frameWidth = Math.max(1, event.width - sidePad * 2);
+          if (frameWidth < 4) {
+            return withTranscriptMarkdown(() => content.handleMouse({
+              ...event,
+              x: event.x - sidePad,
+              width: frameWidth,
+            }));
+          }
+          const contentWidth = Math.max(1, frameWidth - 4);
+          if (event.y <= 0 || event.x < sidePad + 2 || event.x >= sidePad + 2 + contentWidth) {
+            return undefined;
+          }
+          return withTranscriptMarkdown(() => content.handleMouse({
+            ...event,
+            x: event.x - sidePad - 2,
+            y: event.y - 1,
+            width: contentWidth,
+            height: Math.max(0, event.height - 2),
+          }));
         },
         invalidate() {
           content.invalidate?.();
@@ -591,7 +628,18 @@ export default function prettyTui(pi: ExtensionAPI) {
   if (!customMessagePrototype[customMessagePatchKey]) {
     const originalCustomRender = customMessagePrototype.render;
     const originalCustomHandleMouse = customMessagePrototype.handleMouse;
+    const releaseSemanticCustomMessage = (component: any): boolean => {
+      if (!component.customRenderer) return false;
+      const key = customMessageKey(component.message);
+      const member = activityTimeline.memberForUpdate(key);
+      if (member) activityUpdateComponents.delete(member.id);
+      activityTimeline.removeUpdate(key);
+      return true;
+    };
     const patchedCustomRender = function (this: any, width: number): string[] {
+      if (releaseSemanticCustomMessage(this)) {
+        return originalCustomRender.call(this, width);
+      }
       const message = this.message;
       const key = customMessageKey(message);
       let member = activityTimeline.memberForUpdate(key);
@@ -628,6 +676,9 @@ export default function prettyTui(pi: ExtensionAPI) {
       return renderActivityUpdate(group, member, width);
     };
     const patchedCustomHandleMouse = function (this: any, event: any) {
+      if (releaseSemanticCustomMessage(this)) {
+        return originalCustomHandleMouse?.call(this, event);
+      }
       const member = activityTimeline.memberForUpdate(customMessageKey(this.message));
       const group = member ? activityTimeline.groupForMember(member.id) : undefined;
       if (renderMode !== "clean" || !member || !group) {
@@ -731,7 +782,7 @@ export default function prettyTui(pi: ExtensionAPI) {
       this.lastMessage = message;
     };
 
-    const patchedRender = function (this: any, width: number): string[] {
+    const renderAssistantTranscript = function (this: any, width: number): string[] {
       const message = this[originalMessageKey] ?? this.lastMessage;
       if (
         message &&
@@ -848,7 +899,11 @@ export default function prettyTui(pi: ExtensionAPI) {
       return [...output, ...visibleLines];
     };
 
-    const patchedHandleMouse = function (this: any, event: any) {
+    const patchedRender = function (this: any, width: number): string[] {
+      return withTranscriptMarkdown(() => renderAssistantTranscript.call(this, width));
+    };
+
+    const handleAssistantTranscriptMouse = function (this: any, event: any) {
       const message = this[originalMessageKey] ?? this.lastMessage;
       if (renderMode !== "clean" || !eligibleThinking(message)) {
         return originalHandleMouse.call(this, event);
@@ -906,6 +961,10 @@ export default function prettyTui(pi: ExtensionAPI) {
         return { handled: true };
       }
       return undefined;
+    };
+
+    const patchedHandleMouse = function (this: any, event: any) {
+      return withTranscriptMarkdown(() => handleAssistantTranscriptMouse.call(this, event));
     };
 
     assistantPrototype[thinkingPatchKey] = {
@@ -1209,6 +1268,7 @@ export default function prettyTui(pi: ExtensionAPI) {
   const codeBlockPatchKey = Symbol.for("pretty-tui.code-blocks");
   const codeBlockCollectionKey = Symbol("pretty-tui.code-block-collection");
   const codeBlockRegionsKey = Symbol("pretty-tui.code-block-regions");
+  const transcriptMarkdownStateKey = Symbol("pretty-tui.transcript-markdown-state");
   if (!markdownPrototype[codeBlockPatchKey]) {
     const originalInvalidate = markdownPrototype.invalidate;
     const originalRender = markdownPrototype.render;
@@ -1224,6 +1284,15 @@ export default function prettyTui(pi: ExtensionAPI) {
     };
 
     const patchedRender = function (this: any, width: number): string[] {
+      const scoped = transcriptMarkdownActive();
+      if (this[transcriptMarkdownStateKey] !== scoped) {
+        delete this[codeBlockCollectionKey];
+        delete this[codeBlockRegionsKey];
+        originalInvalidate.call(this);
+        this[transcriptMarkdownStateKey] = scoped;
+      }
+      if (!scoped) return originalRender.call(this, width);
+
       const needsRender =
         !this.cachedLines || this.cachedText !== this.text || this.cachedWidth !== width;
       if (needsRender) this[codeBlockCollectionKey] = [];
@@ -1267,6 +1336,10 @@ export default function prettyTui(pi: ExtensionAPI) {
       nextTokenType?: string,
       styleContext?: any,
     ): string[] {
+      if (!transcriptMarkdownActive()) {
+        return originalRenderToken.call(this, token, width, nextTokenType, styleContext);
+      }
+
       if (token?.type === "heading") {
         const level = Math.max(1, Math.min(6, Number(token.depth) || 1));
         const maxWidth = Math.max(1, width);
@@ -1429,6 +1502,15 @@ export default function prettyTui(pi: ExtensionAPI) {
     };
 
     const patchedHandleMouse = function (this: any, event: TuiMouseEvent) {
+      // Fullscreen layout hit-testing may dispatch directly to this Markdown
+      // leaf instead of traversing AssistantMessageComponent.handleMouse. The
+      // most recent render therefore records whether this instance belongs to
+      // the main transcript; dynamic render scope alone is not sufficient.
+      const transcriptOwned = transcriptMarkdownActive() || this[transcriptMarkdownStateKey] === true;
+      if (!transcriptOwned) {
+        delete this[codeBlockRegionsKey];
+        return originalHandleMouse?.call(this, event);
+      }
       if (event.button === "left" && (event.type === "press" || event.type === "click")) {
         const region = (this[codeBlockRegionsKey] ?? []).find(
           (candidate: any) =>
