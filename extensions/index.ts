@@ -192,6 +192,16 @@ export default function prettyTui(pi: ExtensionAPI) {
   };
   const responseAnswerTexts = new Map<string, string>();
   let responseRunStartedAt: number | undefined;
+  let workingElapsedTimer: ReturnType<typeof setInterval> | undefined;
+  const stopWorkingElapsedTimer = () => {
+    if (workingElapsedTimer) clearInterval(workingElapsedTimer);
+    workingElapsedTimer = undefined;
+  };
+  const startWorkingElapsedTimer = () => {
+    if (workingElapsedTimer) return;
+    workingElapsedTimer = setInterval(() => currentTui?.requestRender?.(), 1000);
+    workingElapsedTimer.unref?.();
+  };
   let responseHasAssistantMessage = false;
   const assistantAnswerText = (message: any): string => {
     if (typeof message?.content === "string") return message.content.trim();
@@ -203,7 +213,7 @@ export default function prettyTui(pi: ExtensionAPI) {
       .trim();
   };
   const formatResponseDuration = (durationMs: number): string => {
-    const totalSeconds = Math.max(1, Math.round(Math.max(0, durationMs) / 1000));
+    const totalSeconds = Math.floor(Math.max(0, durationMs) / 1000);
     if (totalSeconds < 60) return `${totalSeconds}s`;
     const totalMinutes = Math.floor(totalSeconds / 60);
     const seconds = totalSeconds % 60;
@@ -663,8 +673,13 @@ export default function prettyTui(pi: ExtensionAPI) {
       collapsedActivityGroups.clear();
       expandedThinkingMembers.clear();
       renderMode = requested;
-      if (renderMode === "clean") refreshLatestActivityWidget();
-      else clearLatestActivityStatus();
+      if (renderMode === "clean") {
+        if (cleanRun.active && !cleanRun.settled) startWorkingElapsedTimer();
+        refreshLatestActivityWidget();
+      } else {
+        stopWorkingElapsedTimer();
+        clearLatestActivityStatus();
+      }
       for (const component of cleanToolComponents.values()) component.updateDisplay?.();
       for (const component of thinkingComponents.values()) component.invalidate?.();
       try {
@@ -680,6 +695,7 @@ export default function prettyTui(pi: ExtensionAPI) {
   // Keep the settings command available while disabled, but do not install
   // render patches or override built-in tools until the next enabled reload.
   if (!activeForSession) return;
+  pi.on("session_shutdown", stopWorkingElapsedTimer);
 
   // Give Pi's main prompt editor a complete rounded frame. Render the native
   // editor at a two-column narrower width so cursor layout, wrapping, IME, and
@@ -690,7 +706,30 @@ export default function prettyTui(pi: ExtensionAPI) {
     const hadOwnRender = Object.prototype.hasOwnProperty.call(customEditorPrototype, "render");
     const hadOwnHandleMouse = Object.prototype.hasOwnProperty.call(customEditorPrototype, "handleMouse");
     const originalEditorRender = customEditorPrototype.render;
+    const originalEditorTopBorder = customEditorPrototype.renderTopBorder;
     const originalEditorHandleMouse = customEditorPrototype.handleMouse;
+    const patchedEditorTopBorder = function (this: any, width: number, hiddenLineCount: number): string {
+      if (this.tui) currentTui = this.tui;
+      const indicator = this.workingStatusIndicator;
+      if (renderMode !== "clean" || indicator?.kind !== "working" || responseRunStartedAt === undefined) {
+        return originalEditorTopBorder.call(this, width, hiddenLineCount);
+      }
+      const elapsed = formatResponseDuration(Date.now() - responseRunStartedAt);
+      const indicatorColor = (text: string) => this.borderColor(text);
+      const originalRenderInBorder = indicator.renderInBorder;
+      indicator.renderInBorder = function (availableWidth: number): string {
+        const status = originalRenderInBorder.call(this, availableWidth);
+        const suffix = ` ${elapsed}`;
+        return visibleWidth(status) + visibleWidth(suffix) <= availableWidth
+          ? status + indicatorColor(suffix)
+          : status;
+      };
+      try {
+        return originalEditorTopBorder.call(this, width, hiddenLineCount);
+      } finally {
+        indicator.renderInBorder = originalRenderInBorder;
+      }
+    };
     const patchedEditorRender = function (this: any, width: number): string[] {
       if (width < 3) return originalEditorRender.call(this, width);
 
@@ -724,11 +763,14 @@ export default function prettyTui(pi: ExtensionAPI) {
       hadOwnRender,
       hadOwnHandleMouse,
       originalRender: originalEditorRender,
+      originalTopBorder: originalEditorTopBorder,
       originalHandleMouse: originalEditorHandleMouse,
       patchedRender: patchedEditorRender,
+      patchedTopBorder: patchedEditorTopBorder,
       patchedHandleMouse: patchedEditorHandleMouse,
     };
     customEditorPrototype.render = patchedEditorRender;
+    customEditorPrototype.renderTopBorder = patchedEditorTopBorder;
     customEditorPrototype.handleMouse = patchedEditorHandleMouse;
 
     pi.on("session_shutdown", () => {
@@ -738,12 +780,16 @@ export default function prettyTui(pi: ExtensionAPI) {
         if (patch.hadOwnRender) customEditorPrototype.render = patch.originalRender;
         else delete customEditorPrototype.render;
       }
+      if (patch.patchedTopBorder === customEditorPrototype.renderTopBorder) {
+        customEditorPrototype.renderTopBorder = patch.originalTopBorder;
+      }
       if (patch.patchedHandleMouse === customEditorPrototype.handleMouse) {
         if (patch.hadOwnHandleMouse) customEditorPrototype.handleMouse = patch.originalHandleMouse;
         else delete customEditorPrototype.handleMouse;
       }
       if (
         customEditorPrototype.render === patch.originalRender &&
+        customEditorPrototype.renderTopBorder === patch.originalTopBorder &&
         customEditorPrototype.handleMouse === patch.originalHandleMouse
       ) {
         delete customEditorPrototype[editorFramePatchKey];
@@ -2798,7 +2844,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     prefix: () => {
       const currentActivity = typeof activity === "function" ? activity() : activity;
       const color = currentActivity === "done"
-        ? collapsedDone ? "thinkingText" : successMarkerColor(theme)
+        ? collapsedDone ? "thinkingText" : "success"
         : "accent";
       return theme.fg(color, "● ");
     },
@@ -2807,7 +2853,7 @@ export default function prettyTui(pi: ExtensionAPI) {
       const currentActivity = typeof activity === "function" ? activity() : activity;
       const label = currentActivity === "done" ? "Done" : "Running";
       const color = label === "Done"
-        ? collapsedDone ? "thinkingText" : successMarkerColor(theme)
+        ? collapsedDone ? "thinkingText" : "success"
         : "accent";
       const detailColor = label === "Done" && collapsedDone ? "thinkingText" : "text";
       return theme.fg(color, theme.bold(label)) +
@@ -3095,6 +3141,7 @@ export default function prettyTui(pi: ExtensionAPI) {
         );
 
   const restoreCleanSession = (ctx: any) => {
+    stopWorkingElapsedTimer();
     currentExtensionUi = ctx.ui;
     clearLatestActivityStatus();
     cleanToolsExpanded = ctx.ui.getToolsExpanded();
@@ -3519,6 +3566,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     cleanRun.activeToolCallId = undefined;
     cleanRun.activeToolName = undefined;
     cleanRun.activity = "thinking";
+    if (renderMode === "clean") startWorkingElapsedTimer();
   });
   pi.on("tool_execution_start", (event) => {
     activityTimeline.addTool(event.toolCallId, event.toolName);
@@ -3568,6 +3616,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     cleanRun.activity = "thinking";
   });
   pi.on("agent_settled", (_event, ctx) => {
+    stopWorkingElapsedTimer();
     if (cleanRun.settled) return;
 
     clearPendingToolActivities();

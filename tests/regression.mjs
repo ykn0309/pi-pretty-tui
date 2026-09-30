@@ -48,6 +48,7 @@ const originalPrototypeMethods = [
   ["InteractiveMode.showError", InteractiveMode.prototype, "showError"],
   ["TuiAltScreen.handleSelectionMouseEvent", TuiAltScreen.prototype, "handleSelectionMouseEvent"],
   ["CustomEditor.render", CustomEditor.prototype, "render"],
+  ["CustomEditor.renderTopBorder", CustomEditor.prototype, "renderTopBorder"],
   ["CustomEditor.handleMouse", CustomEditor.prototype, "handleMouse"],
   ["UserMessageComponent.rebuild", UserMessageComponent.prototype, "rebuild"],
 ].map(([label, target, method]) => [label, target, method, target[method]]);
@@ -931,6 +932,49 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
   for (const width of [1, 4, 8, 12]) {
     assert.ok([...first.render(width), ...second.render(width)]
       .every((line) => visibleWidth(line) <= width));
+  }
+}
+
+// Live duration belongs beside Working in the editor border and uses exactly
+// the same agent-start clock as the durable Completed in footer.
+{
+  const branch = [];
+  await emit("session_start", {}, sessionContext(branch));
+  const originalNow = Date.now;
+  let now = 1_000;
+  const indicator = {
+    kind: "working",
+    renderInBorder: () => "⠋ Working",
+    renderSpinnerInBorder: () => "⠋",
+  };
+  const originalIndicatorRender = indicator.renderInBorder;
+  const editor = {
+    embedWorkingStatus: true,
+    workingStatusIndicator: indicator,
+    borderColor: (text) => `\x1b[34m${text}\x1b[39m`,
+  };
+  try {
+    Date.now = () => now;
+    await emit("agent_start");
+    const border = (width = 80) => CustomEditor.prototype.renderTopBorder.call(editor, width, 0);
+    assert.ok(stripTerminalSequences(border()).includes("Working 0s"));
+    now += 83_000;
+    assert.ok(stripTerminalSequences(border()).includes("Working 1m 23s"));
+    assert.match(border(), /\x1b\[34m 1m 23s\x1b\[39m/);
+    assert.equal(indicator.renderInBorder, originalIndicatorRender, "indicator must not remain patched");
+    assert.ok(!stripTerminalSequences(border(17)).includes("1m 23s"), "narrow editor drops the timer");
+    const tool = new ToolExecutionComponent(
+      "obs_recall", "elapsed-tool", {}, undefined,
+      { renderShell: "self", renderCall: () => new Text("elapsed", 0, 0) },
+      { requestRender() {} }, process.cwd(),
+    );
+    tool.markExecutionStarted();
+    assert.ok(!tool.render(80).map(stripTerminalSequences).join("\n").includes("1m 23s"));
+    await emit("agent_settled");
+    assert.ok(!stripTerminalSequences(border()).includes("1m 23s"));
+    assert.equal(appendedEntries.findLast((entry) => entry.type === "pretty-tui-response-footer")?.data.durationMs, 83_000);
+  } finally {
+    Date.now = originalNow;
   }
 }
 
