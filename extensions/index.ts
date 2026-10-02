@@ -1,3 +1,4 @@
+import { NestedTools, NESTED_SNAPSHOT_ENTRY } from "./nested-tools.js";
 import {
   AssistantMessageComponent,
   CustomEditor,
@@ -223,6 +224,11 @@ export default function prettyTui(pi: ExtensionAPI) {
     return `${hours}h ${String(minutes).padStart(2, "0")}m`;
   };
   const activityTimeline = new ActivityTimeline();
+  const nestedTools = new NestedTools();
+  const refreshNestedTools = (id: string) => {
+    cleanToolComponents.get(nestedTools.root(id))?.updateDisplay?.();
+    currentTui?.requestRender?.();
+  };
   const revealedActivityGroups = new Set<string>();
   // A local collapse must still work when Ctrl+O has expanded every group.
   const collapsedActivityGroups = new Set<string>();
@@ -236,6 +242,8 @@ export default function prettyTui(pi: ExtensionAPI) {
     component: Markdown;
   }>();
   let activityUpdateSequence = 0;
+  // Assigned by the interactive-mode patch below; tool events carry no `this`.
+  let flushDeferredCacheNotices: ((toolCallId: string) => void) | undefined;
   const assistantBoundaryKeys = new Set<string>();
   const cleanCompactToolCallIds = new Set<string>();
   const cleanGroupToolCallIds = new Map<string, string[]>();
@@ -373,7 +381,7 @@ export default function prettyTui(pi: ExtensionAPI) {
   const renderActivityCollapse = (group: ActivityGroup, width: number): string => {
     const theme = activityGroupTheme(group);
     return truncateToWidth(
-      theme.fg("dim", collapsePrefix) + theme.fg("muted", collapseLabel),
+      theme.fg("dim", collapsePrefix) + theme.fg("mdLink", collapseLabel),
       Math.max(1, width),
       "",
     );
@@ -816,10 +824,16 @@ export default function prettyTui(pi: ExtensionAPI) {
       content.paddingY = 0;
       content.setBgFn?.(undefined);
       content.invalidate?.();
-      // Pi wraps the Markdown in a full-width Box. Render the Markdown child
-      // directly so short messages expose their natural visible width instead
-      // of inheriting the Box's width-filling padding.
+      // Older Pi wraps Markdown in a Box; Pi 1.0 renders Markdown directly
+      // with its own background and padding. Normalize both layouts before
+      // measuring, preserving the native foreground and Markdown options.
       const markdown = content.children?.[0] ?? content;
+      markdown.paddingX = 0;
+      markdown.paddingY = 0;
+      if (markdown.defaultTextStyle) {
+        markdown.defaultTextStyle = { ...markdown.defaultTextStyle, bgColor: undefined };
+      }
+      markdown.invalidate?.();
 
       const outputPad = Math.max(0, Number(this.outputPad) || 0);
       const markdownTheme = this.markdownTheme;
@@ -1479,6 +1493,17 @@ export default function prettyTui(pi: ExtensionAPI) {
     const originalShowStatus = interactiveModePrototype.showStatus;
     const originalShowWarning = interactiveModePrototype.showWarning;
     const originalShowError = interactiveModePrototype.showError;
+    const originalAddCacheMissNotice = interactiveModePrototype.addCacheMissNotice;
+    const originalMaybeShowCacheMissNotice = interactiveModePrototype.maybeShowCacheMissNotice;
+    const originalAddMessageToChat = interactiveModePrototype.addMessageToChat;
+    const cacheMessageContexts = new WeakMap<object, any>();
+    const pendingCacheNotices = new Map<string, {
+      key: string; title: string; content: string; toolCallIds: string[];
+    }>();
+    // The interactive-mode instance that owns the chat container. Tool events
+    // carry no `this`, so deferred notices need this handle to mount.
+    const cacheNoticeHost: { current?: any } = {};
+    const cacheNoticeOwners = new WeakMap<object, any>();
     const patchedSetToolsExpanded = function (this: any, expanded: boolean) {
       cleanToolsExpanded = expanded;
       collapsedActivityGroups.clear();
@@ -1504,6 +1529,18 @@ export default function prettyTui(pi: ExtensionAPI) {
       // while Pi's live compaction UI appends it chronologically. Keep reloads
       // and transcript rebuilds consistent with that live presentation.
       const orderedEntries = orderContextEntriesForTranscript(entries);
+      cacheMessageContexts.delete(this);
+      // Pi re-derives notices on each rebuild (including when its display
+      // setting changes). Remove old projections, not their work groups.
+      for (const group of activityTimeline.groups()) {
+        for (const member of [...group.members]) {
+          if (member.updateKey?.startsWith("cache-miss:") || member.updateKey?.startsWith("runtime:cache-miss:")) {
+            activityTimeline.discardUpdate(member.updateKey);
+            activityUpdateComponents.delete(member.id);
+            activityUpdateMarkdownComponents.delete(member.id);
+          }
+        }
+      }
       return originalRenderSessionEntries.call(this, orderedEntries, options);
     };
 
@@ -1588,6 +1625,163 @@ export default function prettyTui(pi: ExtensionAPI) {
       }
     };
 
+    // CacheMiss itself carries no assistant/message ID. Bind it at Pi's
+    // calling sites, rather than depend on private chat-container children or
+    // instanceof checks (these can be wrapped or come from another module).
+    const patchedAddMessageToChat = function (this: any, message: any, ...args: any[]) {
+      if (message?.role === "assistant") cacheMessageContexts.set(this, message);
+      else cacheMessageContexts.delete(this);
+      return originalAddMessageToChat.call(this, message, ...args);
+    };
+    const patchedMaybeShowCacheMissNotice = function (this: any, message: any, ...args: any[]) {
+      const previous = cacheMessageContexts.get(this);
+      cacheMessageContexts.set(this, message);
+      try {
+        return originalMaybeShowCacheMissNotice.call(this, message, ...args);
+      } finally {
+        if (previous) cacheMessageContexts.set(this, previous);
+        else cacheMessageContexts.delete(this);
+      }
+    };
+
+    // One projection component per activity update member. Cache notices are
+    // also mounted immediately after the tool that anchors them, so container
+    // order matches group order even when the notice arrives before the tools.
+    const mountActivityUpdate = (
+      mode: any,
+      group: ActivityGroup,
+      member: ActivityMember,
+      nativeNodes: Component[] = [],
+      after?: Component,
+    ): void => {
+      const container = mode?.chatContainer;
+      const existing = activityUpdateComponents.get(member.id);
+      if (existing) {
+        const children: Component[] | undefined = container?.children;
+        if (after && children) {
+          const target = children.indexOf(existing);
+          const anchorIndex = children.indexOf(after);
+          if (target >= 0 && anchorIndex >= 0 && target !== anchorIndex + 1) {
+            children.splice(target, 1);
+            children.splice(children.indexOf(after) + 1, 0, existing);
+          }
+        }
+        return;
+      }
+      // A mode switch can keep existing components rather than rebuild them.
+      const component: Component = {
+        render: (width: number) => renderMode === "clean"
+          ? renderActivityUpdateProjection(group, member, width)
+          : nativeNodes.flatMap((node) => node.render(width)),
+        invalidate() {},
+        handleMouse: (event: any) => renderMode === "clean"
+          ? handleActivityUpdateMouse(group, member, event)
+          : undefined,
+      } as Component;
+      activityUpdateComponents.set(member.id, component);
+      const index = after && container?.children ? container.children.indexOf(after) : -1;
+      if (index >= 0) {
+        container.children.splice(index + 1, 0, component);
+        return;
+      }
+      container?.addChild?.(component);
+    };
+
+    // Live cache misses arrive before the message's tools execute, so their
+    // members do not exist yet. Attach the notice once its first tool joins the
+    // group; this keeps it inside the tree instead of above it.
+    const flushPendingCacheNotices = (toolCallId: string): void => {
+      if (pendingCacheNotices.size === 0) return;
+      for (const [messageKey, pending] of [...pendingCacheNotices]) {
+        if (!pending.toolCallIds.includes(toolCallId)) continue;
+        pendingCacheNotices.delete(messageKey);
+        const anchorMember = activityTimeline.memberForTool(toolCallId);
+        if (!anchorMember) continue;
+        const member = activityTimeline.addUpdateAfterMember(
+          anchorMember.id, pending.key, pending.title, pending.content, "warning",
+        ) ?? activityTimeline.addStandaloneUpdate(
+          pending.key, pending.title, pending.content, "warning",
+        );
+        const group = activityTimeline.groupForMember(member.id);
+        if (!group) continue;
+        mountActivityUpdate(
+          cacheNoticeHost.current, group, member, [],
+          cleanToolComponents.get(toolCallId),
+        );
+        refreshActivityGroup(group);
+        cacheNoticeHost.current?.ui?.requestRender?.();
+      }
+    };
+    flushDeferredCacheNotices = flushPendingCacheNotices;
+
+    const patchedAddCacheMissNotice = function (this: any, miss: any) {
+      if (renderMode !== "clean" || !this.chatContainer?.addChild) {
+        return originalAddCacheMissNotice.call(this, miss);
+      }
+      // Let Pi decide thresholds, formatting and cause labels. Capture its
+      // native nodes rather than duplicating cache heuristics or matching text.
+      const nativeNodes: Component[] = [];
+      const captureHost = Object.create(this);
+      captureHost.chatContainer = Object.create(this.chatContainer);
+      captureHost.chatContainer.addChild = (node: Component) => nativeNodes.push(node);
+      originalAddCacheMissNotice.call(captureHost, miss);
+      const text = nativeNodes.flatMap((node) => node.render(4096))
+        .map((line) => stripTerminalSequences(line).trim()).filter(Boolean).join("\n");
+      if (!text) return;
+
+      // Rebuilds have already restored the *whole* branch. Use the assistant
+      // physically preceding this insertion, not currentGroup() (the last one).
+      const children: any[] = this.chatContainer.children ?? [];
+      let message: any = cacheMessageContexts.get(this);
+      for (let index = children.length - 1; !message && index >= 0; index--) {
+        const child = children[index];
+        if (cacheNoticeOwners.has(child)) { message = cacheNoticeOwners.get(child); break; }
+        if (child instanceof ToolExecutionComponent) continue;
+        if (child instanceof AssistantMessageComponent) { message = (child as any).lastMessage; break; }
+        break; // never cross a user/custom/compaction boundary
+      }
+      // Live Pi may have inserted a provider diagnostic after the assistant.
+      if (!message && this.streamingComponent && children.includes(this.streamingComponent)) {
+        message = this.streamingMessage;
+      }
+      let anchor: ActivityMember | undefined;
+      const calls = messageContentItems(message).filter((item: any) => item.type === "toolCall");
+      for (let index = calls.length - 1; index >= 0; index--) {
+        anchor = activityTimeline.memberForTool(calls[index].id);
+        if (anchor) break;
+      }
+      if (!anchor && message && !visibleAssistantText(message)) {
+        anchor = activityTimeline.memberForThinking(assistantMessageKey(message));
+      }
+      const key = message
+        ? `cache-miss:${assistantMessageKey(message)}`
+        : `runtime:cache-miss:${++activityUpdateSequence}`;
+      const [title, ...details] = text.split("\n");
+      const content = details.join("\n");
+      cacheNoticeHost.current = this;
+      if (!anchor && calls.length > 0) {
+        // The tools have not started yet: their group does not exist. Defer so
+        // the notice lands after the tool instead of floating above the tree.
+        pendingCacheNotices.set(key, {
+          key, title, content, toolCallIds: calls.map((call: any) => call.id),
+        });
+        return;
+      }
+      const member = (anchor && activityTimeline.addUpdateAfterMember(
+        anchor.id, key, title, content, "warning",
+      )) || activityTimeline.addStandaloneUpdate(key, title, content, "warning");
+      const group = activityTimeline.groupForMember(member.id);
+      if (!group) return;
+      mountActivityUpdate(
+        this, group, member, nativeNodes,
+        anchor?.toolCallId ? cleanToolComponents.get(anchor.toolCallId) : undefined,
+      );
+      const component = activityUpdateComponents.get(member.id);
+      if (component && message) cacheNoticeOwners.set(component, message);
+      refreshActivityGroup(group);
+      this.ui?.requestRender?.();
+    };
+
     interactiveModePrototype[toolsExpansionPatchKey] = {
       originalSetToolsExpanded,
       patchedSetToolsExpanded,
@@ -1605,6 +1799,12 @@ export default function prettyTui(pi: ExtensionAPI) {
       patchedShowWarning,
       originalShowError,
       patchedShowError,
+      originalAddCacheMissNotice,
+      patchedAddCacheMissNotice,
+      originalMaybeShowCacheMissNotice,
+      patchedMaybeShowCacheMissNotice,
+      originalAddMessageToChat,
+      patchedAddMessageToChat,
     };
     interactiveModePrototype.setToolsExpanded = patchedSetToolsExpanded;
     interactiveModePrototype.renderSessionEntries = patchedRenderSessionEntries;
@@ -1614,6 +1814,15 @@ export default function prettyTui(pi: ExtensionAPI) {
     interactiveModePrototype.showStatus = patchedShowStatus;
     interactiveModePrototype.showWarning = patchedShowWarning;
     interactiveModePrototype.showError = patchedShowError;
+    if (typeof originalAddCacheMissNotice === "function") {
+      interactiveModePrototype.addCacheMissNotice = patchedAddCacheMissNotice;
+      if (typeof originalMaybeShowCacheMissNotice === "function") {
+        interactiveModePrototype.maybeShowCacheMissNotice = patchedMaybeShowCacheMissNotice;
+      }
+      if (typeof originalAddMessageToChat === "function") {
+        interactiveModePrototype.addMessageToChat = patchedAddMessageToChat;
+      }
+    }
 
     pi.on("session_shutdown", () => {
       fullscreenTui = false;
@@ -1646,6 +1855,15 @@ export default function prettyTui(pi: ExtensionAPI) {
       if (patch.patchedShowError === interactiveModePrototype.showError) {
         interactiveModePrototype.showError = patch.originalShowError;
       }
+      if (patch.patchedAddCacheMissNotice === interactiveModePrototype.addCacheMissNotice) {
+        interactiveModePrototype.addCacheMissNotice = patch.originalAddCacheMissNotice;
+      }
+      if (patch.patchedMaybeShowCacheMissNotice === interactiveModePrototype.maybeShowCacheMissNotice) {
+        interactiveModePrototype.maybeShowCacheMissNotice = patch.originalMaybeShowCacheMissNotice;
+      }
+      if (patch.patchedAddMessageToChat === interactiveModePrototype.addMessageToChat) {
+        interactiveModePrototype.addMessageToChat = patch.originalAddMessageToChat;
+      }
       if (
         interactiveModePrototype.setToolsExpanded === patch.originalSetToolsExpanded &&
         interactiveModePrototype.renderSessionEntries === patch.originalRenderSessionEntries &&
@@ -1654,7 +1872,10 @@ export default function prettyTui(pi: ExtensionAPI) {
         interactiveModePrototype.toggleThinkingBlockVisibility === patch.originalToggleThinkingBlockVisibility &&
         interactiveModePrototype.showStatus === patch.originalShowStatus &&
         interactiveModePrototype.showWarning === patch.originalShowWarning &&
-        interactiveModePrototype.showError === patch.originalShowError
+        interactiveModePrototype.showError === patch.originalShowError &&
+        interactiveModePrototype.addCacheMissNotice === patch.originalAddCacheMissNotice &&
+        interactiveModePrototype.maybeShowCacheMissNotice === patch.originalMaybeShowCacheMissNotice &&
+        interactiveModePrototype.addMessageToChat === patch.originalAddMessageToChat
       ) {
         delete interactiveModePrototype[toolsExpansionPatchKey];
       }
@@ -2107,24 +2328,10 @@ export default function prettyTui(pi: ExtensionAPI) {
     context.state.compactToolStatus = status;
   };
 
-  const foregroundLuminance = (styled: string): number | undefined => {
-    const trueColor = /\x1b\[38;2;(\d+);(\d+);(\d+)m/.exec(styled);
-    if (!trueColor) return undefined;
-    const [, red, green, blue] = trueColor.map(Number);
-    return red * 0.2126 + green * 0.7152 + blue * 0.0722;
-  };
-
-  const successMarkerColor = (theme: any): string => {
-    const textLuminance = foregroundLuminance(theme.fg("text", "M"));
-    return textLuminance !== undefined && textLuminance < 128
-      ? "success"
-      : "syntaxComment";
-  };
-
   const callRow = (theme: any, name: string, detail: string, state: any): DisplayRow => ({
     prefix: () => {
       const status = (state.compactToolStatus ?? "running") as ToolStatus;
-      const color = status === "success" ? successMarkerColor(theme) : status === "error" ? "error" : "dim";
+      const color = status === "success" ? "success" : status === "error" ? "error" : "dim";
       return theme.fg(color, "● ");
     },
     continuation: "  ",
@@ -2396,7 +2603,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     const dotColor = component.result?.isError
       ? "error"
       : component.result && !component.isPartial
-        ? successMarkerColor(theme)
+        ? "success"
         : "accent";
     const title = theme.fg(dotColor, "● ") +
       theme.fg("accent", theme.bold(label)) +
@@ -2585,7 +2792,7 @@ export default function prettyTui(pi: ExtensionAPI) {
       // not one of our self-rendering specialized tools.
       const thirdParty = !SPECIALIZED_TOOL_NAMES.has(this.toolName) ||
         this.toolDefinition?.renderShell !== "self";
-      const cacheable = !this.expanded && Boolean(this.result) && !this.isPartial;
+      const cacheable = nestedTools.count(this.toolCallId) === 0 && !this.expanded && Boolean(this.result) && !this.isPartial;
       const cached = cacheable ? this[cleanChildRenderCacheKey] : undefined;
       let decoratedContent: string[];
       if (
@@ -2602,7 +2809,9 @@ export default function prettyTui(pi: ExtensionAPI) {
         decoratedContent = cached.lines;
       } else {
         let contentLines: string[];
-        if (thirdParty) {
+        if (nestedTools.count(this.toolCallId) > 0) {
+          contentLines = nestedTools.render(this, childWidth, childTheme).lines;
+        } else if (thirdParty) {
           const summaryLines = renderThirdPartyCompact(this, childWidth, childTheme);
           if (this.expanded) {
             const detailPrefix = "  │ ";
@@ -2683,6 +2892,24 @@ export default function prettyTui(pi: ExtensionAPI) {
         } finally {
           changingAllToolsExpansion = false;
         }
+        return { handled: true };
+      }
+
+      if (nestedTools.count(this.toolCallId) > 0 && isLeftClick) {
+        const theme = cleanThemeForToolCall(this.toolCallId) ?? activityGroupTheme(group);
+        const { childWidth } = activityTreeStyle(group, member, event.width, theme);
+        const projection = nestedTools.render(this, childWidth, theme);
+        const contentY = event.y - (position.first ? summaryHeight + 1 : 0);
+        const action = projection.actions.get(contentY);
+        if (action) {
+          nestedTools.toggle(action);
+          this.updateDisplay?.();
+          this.ui?.requestRender?.();
+        } else if (contentY === 0) {
+          originalSetExpanded.call(this, !this.expanded);
+          this.ui?.requestRender?.();
+        }
+        // Nested results are UI projections, not native renderer rows.
         return { handled: true };
       }
 
@@ -2815,6 +3042,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     _failed: number,
     thoughtCount: number,
     activity = "done",
+    nestedCount = 0,
   ): string => {
     const rawActivityText = typeof activity === "string" ? activity : "done";
     const normalizedActivityText = rawActivityText.trim();
@@ -2830,7 +3058,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     const activityLabel = count > 0 && activityText !== "done" && activityText.trim()
       ? activityText
       : "";
-    return [countLabel, thoughtLabel, activityLabel].filter(Boolean).join(" · ");
+    return [countLabel, nestedCount ? `${nestedCount} nested ${nestedCount === 1 ? "call" : "calls"}` : "", thoughtLabel, activityLabel].filter(Boolean).join(" · ");
   };
 
   const summaryRow = (
@@ -2840,6 +3068,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     thoughtCount: number,
     activity: DisplayValue = "done",
     collapsedDone = false,
+    nestedCount = 0,
   ): DisplayRow => ({
     prefix: () => {
       const currentActivity = typeof activity === "function" ? activity() : activity;
@@ -2858,7 +3087,7 @@ export default function prettyTui(pi: ExtensionAPI) {
       const detailColor = label === "Done" && collapsedDone ? "thinkingText" : "text";
       return theme.fg(color, theme.bold(label)) +
         theme.fg("dim", "(") +
-        theme.fg(detailColor, summaryText(count, failed, thoughtCount, currentActivity)) +
+        theme.fg(detailColor, summaryText(count, failed, thoughtCount, currentActivity, nestedCount)) +
         theme.fg("dim", ")");
     },
   });
@@ -2908,6 +3137,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     const owner = activityGroupOwner(group);
     const settled = owner ? settledSummaries.get(owner) : undefined;
     const toolCount = group.toolCallIds.length;
+    const nestedCount = group.toolCallIds.reduce((count, id) => count + nestedTools.count(id), 0);
     const live = () => cleanRun.activeToolName ?? currentCleanActivity();
     if (settled) {
       return fit(block([summaryRow(
@@ -2917,6 +3147,7 @@ export default function prettyTui(pi: ExtensionAPI) {
         Math.max(settled.thoughtCount, group.thoughtCount),
         settled.activity,
         collapsedDone,
+        nestedCount,
       )]).render(width));
     }
     if (owner && !cleanRun.settled) {
@@ -2928,6 +3159,7 @@ export default function prettyTui(pi: ExtensionAPI) {
         group.thoughtCount,
         live,
         collapsedDone,
+        nestedCount,
       )]).render(width));
     }
     if (!owner && !activityTimeline.isSettled(group.id)) {
@@ -2939,6 +3171,7 @@ export default function prettyTui(pi: ExtensionAPI) {
         group.thoughtCount,
         "thinking",
         collapsedDone,
+        nestedCount,
       )]).render(width));
     }
     // Finished group with no durable summary: a completed Thought-only turn, or
@@ -2950,6 +3183,7 @@ export default function prettyTui(pi: ExtensionAPI) {
       group.thoughtCount,
       "done",
       collapsedDone,
+      nestedCount,
     )]).render(width));
   };
 
@@ -3148,6 +3382,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     settledSummaries.clear();
     legacySummaryLastToolCallIds.clear();
     activityTimeline.clear();
+    nestedTools.clear();
     responseAnswerTexts.clear();
     responseRunStartedAt = undefined;
     responseHasAssistantMessage = false;
@@ -3307,6 +3542,10 @@ export default function prettyTui(pi: ExtensionAPI) {
     cleanContextCompacted = modelContextEntries[0]?.type === "compaction";
     const contextEntries = orderContextEntriesForTranscript(modelContextEntries);
     for (const entry of contextEntries) {
+      if (entry.type === "custom" && entry.customType === NESTED_SNAPSHOT_ENTRY) {
+        nestedTools.restore(entry.data);
+        continue;
+      }
       if (entry.type === "compaction") {
         finishGroup();
         lastFinishedGroup = undefined;
@@ -3391,6 +3630,10 @@ export default function prettyTui(pi: ExtensionAPI) {
         continue;
       }
 
+      if (message.role === "toolResult") {
+        nestedTools.absorb(message.toolCallId, message.nestedCalls ?? message.details?.calls, !message.details?.callsTruncated);
+      }
+
       if (
         message.role === "toolResult" &&
         toolCalls.has(message.toolCallId) &&
@@ -3473,6 +3716,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     if (toolCalls.length === 0) return false;
     for (const toolCall of toolCalls) {
       activityTimeline.addTool(toolCall.id, toolCall.name ?? "tool");
+      flushDeferredCacheNotices?.(toolCall.id);
       if (!cleanRun.currentToolCallIds.includes(toolCall.id)) {
         cleanRun.currentToolCallIds.push(toolCall.id);
       }
@@ -3569,7 +3813,13 @@ export default function prettyTui(pi: ExtensionAPI) {
     if (renderMode === "clean") startWorkingElapsedTimer();
   });
   pi.on("tool_execution_start", (event) => {
+    if ((event as any).parentToolCallId) {
+      nestedTools.start(event);
+      refreshNestedTools(event.toolCallId);
+      return;
+    }
     activityTimeline.addTool(event.toolCallId, event.toolName);
+    flushDeferredCacheNotices?.(event.toolCallId);
     if (!cleanRun.currentToolCallIds.includes(event.toolCallId)) {
       cleanRun.currentToolCallIds.push(event.toolCallId);
     }
@@ -3581,7 +3831,25 @@ export default function prettyTui(pi: ExtensionAPI) {
     cleanRun.activeToolCallId = event.toolCallId;
     beginToolActivity(event.toolCallId, displayName, true);
   });
+  pi.on("tool_execution_update", (event) => {
+    if ((event as any).parentToolCallId) {
+      nestedTools.update(event);
+      refreshNestedTools(event.toolCallId);
+    } else {
+      nestedTools.absorb(event.toolCallId, (event.partialResult as any)?.details?.calls, !(event.partialResult as any)?.details?.callsTruncated);
+      refreshNestedTools(event.toolCallId);
+    }
+  });
   pi.on("tool_execution_end", (event) => {
+    if ((event as any).parentToolCallId) {
+      nestedTools.update(event, true);
+      refreshNestedTools(event.toolCallId);
+      return;
+    }
+    nestedTools.absorb(event.toolCallId, (event.result as any)?.details?.calls, !(event.result as any)?.details?.callsTruncated);
+    nestedTools.finish(event.toolCallId);
+    const snapshot = nestedTools.snapshot(event.toolCallId);
+    if (snapshot) pi.appendEntry(NESTED_SNAPSHOT_ENTRY, snapshot);
     const activityName = cleanRun.activeToolCallId === event.toolCallId
       ? cleanRun.activeToolName ?? cleanToolNames.get(event.toolCallId) ?? event.toolName
       : cleanToolNames.get(event.toolCallId) ?? event.toolName;
@@ -3618,6 +3886,11 @@ export default function prettyTui(pi: ExtensionAPI) {
   pi.on("agent_settled", (_event, ctx) => {
     stopWorkingElapsedTimer();
     if (cleanRun.settled) return;
+    for (const rootId of nestedTools.finishAll()) {
+      const snapshot = nestedTools.snapshot(rootId);
+      if (snapshot) pi.appendEntry(NESTED_SNAPSHOT_ENTRY, snapshot);
+      refreshNestedTools(rootId);
+    }
 
     clearPendingToolActivities();
     // Finalize the last group after retries/compaction have definitely ended.

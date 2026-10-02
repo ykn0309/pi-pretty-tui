@@ -11,6 +11,7 @@ import {
   ToolExecutionComponent,
   UserMessageComponent,
   initTheme,
+  getMarkdownTheme,
 } from "@earendil-works/pi-coding-agent";
 import { Markdown, Text, TuiAltScreen, stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import {
@@ -46,6 +47,9 @@ const originalPrototypeMethods = [
   ["InteractiveMode.showStatus", InteractiveMode.prototype, "showStatus"],
   ["InteractiveMode.showWarning", InteractiveMode.prototype, "showWarning"],
   ["InteractiveMode.showError", InteractiveMode.prototype, "showError"],
+  ["InteractiveMode.addCacheMissNotice", InteractiveMode.prototype, "addCacheMissNotice"],
+  ["InteractiveMode.maybeShowCacheMissNotice", InteractiveMode.prototype, "maybeShowCacheMissNotice"],
+  ["InteractiveMode.addMessageToChat", InteractiveMode.prototype, "addMessageToChat"],
   ["TuiAltScreen.handleSelectionMouseEvent", TuiAltScreen.prototype, "handleSelectionMouseEvent"],
   ["CustomEditor.render", CustomEditor.prototype, "render"],
   ["CustomEditor.renderTopBorder", CustomEditor.prototype, "renderTopBorder"],
@@ -209,6 +213,15 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
   assert.equal(shortFrame.start, 69);
   assert.ok(shortLines.some((line) => line.includes("已发布")));
   assert.ok(!shortRaw.join("\n").match(/\x1b\[(?:4[0-9]|10[0-7]|48(?:;|:))/));
+
+  // Pi 1.0 puts background/padding on Markdown itself, not an outer Box.
+  // Native rebuilds (e.g. output padding changes) must normalize that too.
+  shortBubble.setOutputPad(2);
+  const rebuiltRaw = shortBubble.render(80);
+  const rebuiltFrame = frameBounds(plainLines(shortBubble, 80)[0]);
+  assert.equal(rebuiltFrame.width, 10);
+  assert.equal(rebuiltFrame.start, 68);
+  assert.ok(!rebuiltRaw.join("\n").match(/\x1b\[(?:4[0-9]|10[0-7]|48(?:;|:))/));
 
   const longText = "A long user message should wrap inside a bounded chat bubble while preserving a clear blank area on its left side. ".repeat(3);
   const longBubble = new UserMessageComponent(longText);
@@ -2176,6 +2189,461 @@ for (const key of [...protoPatchKeys, ...symbolPatchKeys]) {
 }
 
 // session_shutdown must also drop the transient UI flash and its timer.
+// Codemode/nested tools: one real transcript component owns independently
+// expandable children. Internal events must not create phantom top-level rows.
+{
+  await emit("session_start", {}, sessionContext([]));
+  await emit("agent_start");
+  const realNestedNow = Date.now;
+  let nestedNow = realNestedNow();
+  Date.now = () => nestedNow;
+  const parentId = "nested-parent";
+  const root = new ToolExecutionComponent("codemode", parentId,
+    { code: 'const r = await tools.read({path:"demo.txt"}); text(r);' }, undefined,
+    { renderCall: () => new Text("native script", 0, 0) }, { requestRender() {} }, process.cwd());
+  root.markExecutionStarted();
+  await emit("tool_execution_start", { toolCallId: parentId, toolName: "codemode", args: root.args });
+  const start = (id, name, args, parentToolCallId = parentId) => emit("tool_execution_start", {
+    toolCallId: id, toolName: name, args, parentToolCallId,
+  });
+  const end = (id, name, text, isError = false, parentToolCallId = parentId) => emit("tool_execution_end", {
+    toolCallId: id, toolName: name, parentToolCallId, isError,
+    result: { content: [{ type: "text", text }] },
+  });
+  await start(`${parentId}/1`, "read", { path: "demo.txt", apiKey: "HIDDEN_SECRET" });
+  await start(`${parentId}/2`, "remote", {});
+  await start(`${parentId}/2/1`, "grep", { pattern: "fixture" }, `${parentId}/2`);
+  root.setExpanded(true); // reveal the group without expanding all details
+  const render = (width = 120) => root.render(width).map(stripTerminalSequences);
+  assert.match(render().join("\n"), /1 tool call · 3 nested calls/);
+  assert.match(render().join("\n"), /Running…/);
+  assert.ok(!render().join("\n").includes("HIDDEN_SECRET"));
+  await emit("tool_execution_update", {
+    toolCallId: `${parentId}/1`, toolName: "read", parentToolCallId: parentId,
+    partialResult: { content: [{ type: "text", text: "Reading fixture…" }] },
+  });
+  assert.match(render().join("\n"), /Reading fixture/);
+  await end(`${parentId}/1`, "read", "Read 2 lines\nPRIVATE CHILD DETAIL");
+  await end(`${parentId}/2/1`, "grep", "No permission", true, `${parentId}/2`);
+  await end(`${parentId}/2`, "remote", "Handled child error");
+  const rootResult = { content: [{ type: "text", text: "Script completed\nFINAL SCRIPT OUTPUT" }], isError: false };
+  await emit("tool_execution_end", { toolCallId: parentId, toolName: "codemode", result: rootResult, isError: false });
+  root.updateResult(rootResult);
+  nestedNow += 2000; // expire the existing minimum tool-status hold
+  await emit("agent_settled");
+  let lines = render();
+  assert.match(lines.join("\n"), /Done\(1 tool call · 3 nested calls/);
+  assert.match(lines.join("\n"), /3 nested calls · 1 failed/);
+  assert.ok(!lines.join("\n").includes("PRIVATE CHILD DETAIL"));
+  assert.ok(!lines.join("\n").includes("FINAL SCRIPT OUTPUT"));
+  assert.equal(lines.at(-1), "  └─ [↑ Collapse]", "nested events displaced the group's collapse action");
+  const clickRow = (needle) => {
+    const rows = render();
+    const y = rows.findIndex((line) => line.includes(needle));
+    assert.ok(y >= 0, rows.join("\n"));
+    assert.equal(root.handleMouse({ type: "click", button: "left", x: 14, y, width: 120, height: rows.length })?.handled, true);
+  };
+  clickRow("read(");
+  assert.match(render().join("\n"), /PRIVATE CHILD DETAIL/);
+  assert.ok(!render().join("\n").includes("FINAL SCRIPT OUTPUT"));
+  clickRow("[Script output]");
+  assert.match(render().join("\n"), /FINAL SCRIPT OUTPUT/);
+  clickRow("[Script]");
+  assert.match(render().join("\n"), /const r = await tools/);
+  clickRow("const r = await tools");
+  assert.ok(!render().join("\n").includes("const r = await tools"), "script body click must collapse script");
+  assert.match(render().join("\n"), /PRIVATE CHILD DETAIL/);
+  clickRow("FINAL SCRIPT OUTPUT");
+  assert.ok(!render().join("\n").includes("FINAL SCRIPT OUTPUT"), "output body click must collapse output");
+  clickRow("PRIVATE CHILD DETAIL");
+  assert.ok(!render().join("\n").includes("PRIVATE CHILD DETAIL"), "child body click must collapse child only");
+  clickRow("[Script]");
+  clickRow("[Script]");
+  assert.ok(!render().join("\n").includes("const r = await tools"), "header click must still toggle script");
+  for (const width of [1, 12, 40, 80]) assert.ok(render(width).every((line) => visibleWidth(line) <= width));
+  clickRow("[↑ Collapse]");
+  assert.ok(!render().join("\n").includes("read("));
+  assert.ok(!render().join("\n").includes("[↑ Collapse]"));
+
+  const saved = appendedEntries.findLast((entry) => entry.type === "pretty-tui-nested-results" && entry.data.rootId === parentId);
+  assert.ok(saved);
+  assert.equal(saved.data.calls.length, 3);
+  assert.ok(!JSON.stringify(saved).includes("HIDDEN_SECRET"));
+  // Restore a branch that has the hidden UI snapshot plus native call metadata.
+  const history = [assistant("80", undefined, [{ id: parentId, name: "codemode" }]),
+    { type: "custom", customType: saved.type, data: saved.data },
+    { ...result("81", "80", parentId), message: { role: "toolResult", toolCallId: parentId,
+      nestedCalls: { calls: [{ id: `${parentId}/1`, name: "read", status: "ok", arguments: { path: "demo.txt" } }], complete: true },
+      content: rootResult.content } }];
+  await emit("session_start", {}, sessionContext(history));
+  const restored = new ToolExecutionComponent("codemode", parentId, { code: "text('restored')" }, undefined,
+    undefined, { requestRender() {} }, process.cwd());
+  restored.updateResult(rootResult);
+  restored.render(120); restored.setExpanded(true);
+  let rows = restored.render(120).map(stripTerminalSequences);
+  assert.match(rows.join("\n"), /1 tool call · 3 nested calls/);
+  const y = rows.findIndex((line) => line.includes("read("));
+  restored.handleMouse({ type: "click", button: "left", x: 14, y, width: 120, height: rows.length });
+  assert.match(restored.render(120).map(stripTerminalSequences).join("\n"), /PRIVATE CHILD DETAIL/);
+  Date.now = realNestedNow;
+}
+
+// Metadata-only older sessions still expose child arguments/status, without
+// claiming their original results were saved. UI snapshots have strict limits.
+{
+  const { NestedTools, NESTED_LIMITS } = await import("../extensions/nested-tools.ts");
+  const nested = new NestedTools();
+  nested.absorb("old", { calls: [
+    { id: "old/1", name: "read", arguments: { path: "history.txt" }, status: "ok", durationMs: 12 },
+    { id: "old/2", name: "remote", status: "unfinished", argumentsBytes: 9000 },
+  ], complete: false });
+  const owner = { toolCallId: "old", toolName: "codemode", args: { code: "text('history')" }, result: { content: [] }, expanded: false };
+  const disclosureColors = [];
+  const disclosureTheme = { ...theme, fg(color, text) { disclosureColors.push([text, color]); return text; } };
+  const oldLines = nested.render(owner, 100, disclosureTheme).lines.join("\n");
+  assert.ok(disclosureColors.some(([text, color]) => text === "[Script]" && color === "mdLink"));
+  assert.ok(disclosureColors.some(([text, color]) => text === "[Script output]" && color === "mdLink"));
+  assert.ok(disclosureColors.some(([text, color]) => text === "  ├─ " && color === "dim"));
+  assert.match(oldLines, /Only call metadata retained/);
+  assert.match(oldLines, /history.txt/);
+  assert.match(oldLines, /incomplete/);
+  assert.equal(nested.children("old")[1].status, "cancelled");
+  nested.absorb("old", [{ id: "old/3", name: "read", status: "error" }]);
+  disclosureColors.length = 0;
+  const statusLines = nested.render(owner, 100, disclosureTheme).lines.join("\n");
+  assert.ok(disclosureColors.some(([text, color]) => text === "● " && color === "success"));
+  assert.ok(disclosureColors.some(([text, color]) => text === "● " && color === "error"));
+  assert.ok(!statusLines.includes("✕"), "failed nested tools must use the same dot as top-level tools");
+
+  nested.absorb("secrets", [{ id: "secrets/1", name: "read", args: '{"apiKey":"META_SECRET"}', status: "ok" }]);
+  nested.absorb("secrets", [{ id: "secrets/2", name: "read", args: '{"token":"TRUNCATED_SECRET', status: "ok" }]);
+  assert.ok(!JSON.stringify(nested.snapshot("secrets")).includes("META_SECRET"));
+  assert.ok(!JSON.stringify(nested.snapshot("secrets")).includes("TRUNCATED_SECRET"));
+  nested.clear();
+  for (let i = 0; i <= NESTED_LIMITS.calls; i++) {
+    nested.start({ toolCallId: `big/${i}`, parentToolCallId: "big", toolName: "read", args: { value: "x".repeat(6000) } });
+    nested.update({ toolCallId: `big/${i}`, result: { content: [{ type: "text", text: "y".repeat(12000) }] } }, true);
+  }
+  const snapshot = nested.snapshot("big");
+  assert.equal(snapshot.calls.length, NESTED_LIMITS.calls);
+  assert.equal(snapshot.incomplete, true);
+  assert.ok(snapshot.calls.reduce((sum, call) => sum + call.args.length + (call.output?.length ?? 0), 0) <= NESTED_LIMITS.total);
+  assert.ok(snapshot.calls.every((call) => (call.output?.length ?? 0) <= NESTED_LIMITS.output));
+  const restored = new NestedTools(); restored.restore(snapshot);
+  assert.equal(restored.count("big"), NESTED_LIMITS.calls);
+  nested.clear();
+  nested.start({ toolCallId: "cancel/1", parentToolCallId: "cancel", toolName: "bash", args: {} });
+  assert.deepEqual(nested.finishAll(), ["cancel"]);
+  assert.equal(nested.children("cancel")[0].status, "cancelled");
+  nested.absorb("wrapper", [{ id: "wrapper/1", name: "mcp.tool", args: "{}", status: "ok" }]);
+  assert.match(nested.render({ toolCallId: "wrapper", toolName: "other-wrapper", args: {}, result: {} }, 80, theme).lines.join("\n"), /mcp.tool/);
+}
+
+// When testing against modern Pi, execute an actual QuickJS codemode script
+// through Pi's nested runner, not only hand-written UI events. The project's
+// older baseline has no codemode export and intentionally skips this block.
+{
+  const runtime = await import("@earendil-works/pi-coding-agent");
+  if (typeof runtime.createCodemodeExtension === "function") {
+    const { NestedToolCallRunner } = await import(new URL("./core/nested-tool-calls.js", import.meta.resolve("@earendil-works/pi-coding-agent")));
+    await emit("session_start", {}, sessionContext([]));
+    await emit("agent_start");
+    let definition;
+    runtime.createCodemodeExtension({ models: false })({
+      registerTool(tool) { definition = tool; }, appendEntry() {},
+      getAllTools: () => [], getSettings: () => ({}),
+    });
+    const callable = [{ name: "fixture", label: "fixture", description: "Return a text fixture",
+      parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } }];
+    const runner = new NestedToolCallRunner({
+      getTools: () => callable, isSequential: () => false,
+      emit: (event) => emit(event.type, event),
+      runToolCall: async (toolCall) => ({ toolCall, isError: false,
+        result: { content: [{ type: "text", text: `Read ${toolCall.arguments.path}\nNATIVE NESTED DETAIL` }] } }),
+    });
+    const parentId = "native-codemode";
+    const args = { code: 'const r = await Promise.all([tools.fixture({path:"one.txt"}), tools.fixture({path:"two.txt"})]); text("FINAL ONLY");' };
+    const tool = new ToolExecutionComponent("codemode", parentId, args, undefined, definition,
+      { requestRender() {} }, process.cwd());
+    tool.markExecutionStarted(); tool.render(100);
+    await emit("tool_execution_start", { toolCallId: parentId, toolName: "codemode", args });
+    const output = await definition.execute(parentId, args, new AbortController().signal,
+      async (partialResult) => {
+        tool.updateResult({ ...partialResult, isError: false }, true);
+        await emit("tool_execution_update", { toolCallId: parentId, toolName: "codemode", args, partialResult });
+      }, {
+        tools: callable, sessionManager: { getBranch: () => [] },
+        executeTool: (name, parameters, options) => runner.execute(parentId, name, parameters, options),
+      });
+    assert.match(output.content.map((block) => block.text ?? "").join("\n"), /FINAL ONLY/);
+    assert.equal(output.details.calls.length, 2);
+    await emit("tool_execution_end", { toolCallId: parentId, toolName: "codemode", result: output, isError: false });
+    tool.updateResult({ ...output, isError: false }); tool.setExpanded(true);
+    let lines = tool.render(100).map(stripTerminalSequences);
+    assert.match(lines.join("\n"), /1 tool call · 2 nested calls/);
+    assert.ok(lines.some((line) => line.includes("fixture(path=one.txt)")));
+    assert.ok(lines.some((line) => line.includes("fixture(path=two.txt)")));
+    assert.ok(!lines.join("\n").includes("NATIVE NESTED DETAIL"));
+    const y = lines.findIndex((line) => line.includes("fixture(path=one.txt)"));
+    tool.handleMouse({ type: "click", button: "left", x: 14, y, width: 100, height: lines.length });
+    assert.match(tool.render(100).map(stripTerminalSequences).join("\n"), /NATIVE NESTED DETAIL/);
+    assert.equal(tool.render(100).map(stripTerminalSequences).at(-1), "  └─ [↑ Collapse]");
+    const commandContext = { hasUI: true, ui: { notify() {} } };
+    for (const mode of ["full", "compact"]) {
+      await commands.get("pretty-tui").handler(mode, commandContext);
+      const nativeLines = tool.render(100).map(stripTerminalSequences).join("\n");
+      assert.match(nativeLines, /FINAL ONLY/);
+      assert.ok(!nativeLines.includes("nested calls"));
+      assert.ok(!nativeLines.includes("[Script output]"));
+    }
+    await commands.get("pretty-tui").handler("clean", commandContext);
+    await emit("session_before_compact"); await emit("agent_settled");
+    console.log("Native codemode sandbox integration passed.");
+  }
+}
+
+// Cache notices are derived by Pi, not persisted or treated as extension
+// warnings. Historical insertion must target the owning message's group.
+{
+  const timeline = new ActivityTimeline();
+  const first = timeline.addTool("cache-first", "bash");
+  const next = timeline.addTool("cache-next", "read");
+  timeline.boundary();
+  const later = timeline.addTool("cache-later", "bash");
+  const notice = timeline.addUpdateAfterMember(first.id, "miss:first", "Cache miss", "", "warning");
+  assert.deepEqual(timeline.groupForMember(first.id).members.map((member) => member.id), [first.id, notice.id, next.id]);
+  assert.equal(timeline.groupForMember(notice.id), timeline.groupForMember(first.id));
+  assert.equal(timeline.currentGroup(), timeline.groupForMember(later.id));
+  assert.equal(timeline.addUpdateAfterMember(first.id, "miss:first", "Cache miss", "", "warning"), notice);
+  const standalone = timeline.addStandaloneUpdate("miss:answer", "Cache miss", "", "warning");
+  assert.ok(!timeline.hasWork(timeline.groupForMember(standalone.id)));
+  assert.equal(timeline.currentGroup(), timeline.groupForMember(later.id));
+  timeline.discardUpdate("miss:first");
+  assert.deepEqual(timeline.groupForMember(first.id).members.map((member) => member.id), [first.id, next.id]);
+  assert.ok(!timeline.groupForMember(first.id).hardBoundarySplit);
+  timeline.discardUpdate("miss:answer");
+  assert.equal(timeline.groupForMember(standalone.id), undefined);
+  assert.equal(timeline.currentGroup(), timeline.groupForMember(later.id));
+}
+if (typeof InteractiveMode.prototype.addCacheMissNotice === "function") {
+  const firstMessage = assistant("90", undefined, [{ id: "cache-owner-first", name: "bash" }]);
+  const nextMessage = assistant("92", "91", [{ id: "cache-owner-next", name: "read" }]);
+  const laterMessage = assistant("95", "94", [{ id: "cache-owner-later", name: "bash" }]);
+  const entries = [firstMessage, result("91", "90", "cache-owner-first"), nextMessage,
+    result("93", "92", "cache-owner-next"), user("94", "93"), laterMessage,
+    result("96", "95", "cache-owner-later")];
+  const makeTool = (name, id) => {
+    const tool = new ToolExecutionComponent(name, id, {}, undefined,
+      { renderShell: "self", renderCall: () => new Text(name, 0, 0) }, { requestRender() {} }, process.cwd());
+    tool.updateResult({ content: [{ type: "text", text: "Done" }], isError: false });
+    return tool;
+  };
+  const render = (component) => component.render(120).map(stripTerminalSequences).join("\n");
+  const miss = { missedTokens: 79_000, missedCost: 0.15, idleMs: 1000, modelChanged: false };
+  await emit("session_start", {}, sessionContext(entries));
+  const firstAssistant = new AssistantMessageComponent(firstMessage.message, false);
+  const first = makeTool("bash", "cache-owner-first");
+  const children = [firstAssistant, first];
+  const host = { ui: { requestRender() {} }, chatContainer: { children, addChild(child) { children.push(child); } } };
+  InteractiveMode.prototype.addCacheMissNotice.call(host, miss);
+  assert.equal(children.length, 3, "native spacer/text were appended instead of one activity projection");
+  const notice = children.at(-1);
+  assert.equal(render(notice), "", "collapsed group exposed its cache notice");
+  first.render(120); first.setExpanded(true);
+  assert.match(render(notice), /├─ ⚠ Cache miss: 79k tokens re-billed \(~\$0\.15\)/);
+  InteractiveMode.prototype.addCacheMissNotice.call(host, miss);
+  assert.equal(children.length, 3, "same assistant cache notice was duplicated");
+  const next = makeTool("read", "cache-owner-next");
+  const later = makeTool("bash", "cache-owner-later");
+  assert.equal(next.render(120).map(stripTerminalSequences).at(-1), "  └─ [↑ Collapse]");
+  assert.equal(later.render(120).length, 2, "historical notice altered the last group's visibility");
+  const nextRows = next.render(120).map(stripTerminalSequences);
+  next.handleMouse({ type: "click", button: "left", x: 7, y: nextRows.length - 1, width: 120, height: nextRows.length });
+  assert.equal(render(notice), "");
+
+  const beforeThreshold = children.length;
+  InteractiveMode.prototype.addCacheMissNotice.call(host, { ...miss, missedTokens: 100, missedCost: 0.001 });
+  assert.equal(children.length, beforeThreshold, "native cache-miss noise threshold changed");
+  // A rebuild resets derived nodes; it does not need or append a session entry.
+  const savedEntryCount = appendedEntries.length;
+  await emit("session_tree", {}, sessionContext(entries));
+  const rebuiltFirst = makeTool("bash", "cache-owner-first");
+  host.chatContainer.children = [new AssistantMessageComponent(firstMessage.message, false), rebuiltFirst];
+  host.chatContainer.addChild = function (child) { this.children.push(child); };
+  InteractiveMode.prototype.addCacheMissNotice.call(host, miss);
+  const rebuiltNotice = host.chatContainer.children.at(-1);
+  rebuiltFirst.render(120); rebuiltFirst.setExpanded(true);
+  assert.match(render(rebuiltNotice), /Cache miss: 79k/);
+  assert.equal(appendedEntries.length, savedEntryCount);
+
+  // A visible answer with no following tool/thought work gets an independent
+  // notice. It must not join the last pre-restored (future) activity group.
+  const answer = assistant("97", "96", [], "Final answer");
+  await emit("session_start", {}, sessionContext([...entries, answer]));
+  host.chatContainer.children = [new AssistantMessageComponent(answer.message, false)];
+  InteractiveMode.prototype.addCacheMissNotice.call(host, { ...miss, idleMs: 360_000 });
+  assert.match(render(host.chatContainer.children.at(-1)), /⚠ Cache miss after 6m idle/);
+  assert.ok(!render(host.chatContainer.children.at(-1)).includes("Collapse"));
+
+  // Live diagnostics can appear immediately before the notice. The actual
+  // streaming assistant still owns it; cache warnings do not seal its group.
+  await emit("session_start", {}, sessionContext(entries.slice(0, 2)));
+  const liveAssistant = new AssistantMessageComponent(firstMessage.message, false);
+  const liveTool = makeTool("bash", "cache-owner-first");
+  host.chatContainer.children = [liveAssistant, liveTool, new Text("Provider diagnostic", 0, 0)];
+  host.streamingComponent = liveAssistant;
+  host.streamingMessage = firstMessage.message;
+  InteractiveMode.prototype.addCacheMissNotice.call(host, miss);
+  const liveNotice = host.chatContainer.children.at(-1);
+  liveTool.render(120); liveTool.setExpanded(true);
+  assert.match(render(liveNotice), /Cache miss: 79k/);
+  assert.equal(liveNotice.render(120).map(stripTerminalSequences).at(-1), "  └─ [↑ Collapse]");
+  assert.ok(!render(liveTool).includes("Collapse"), "tool kept an extra collapse tail");
+  const liveRows = liveNotice.render(120).map(stripTerminalSequences);
+  liveNotice.handleMouse({ type: "click", button: "left", x: 7, y: liveRows.length - 1, width: 120, height: liveRows.length });
+  assert.equal(render(liveNotice), "");
+
+  // Native full/compact mode retain the original spacer and text presentation.
+  const commandContext = { hasUI: true, ui: { notify() {} } };
+  for (const mode of ["full", "compact"]) {
+    await commands.get("pretty-tui").handler(mode, commandContext);
+    assert.match(render(liveNotice), /Cache miss: 79k/);
+    assert.ok(!render(liveNotice).includes("⚠"), "existing notice did not switch back to native rendering");
+    host.chatContainer.children = [];
+    InteractiveMode.prototype.addCacheMissNotice.call(host, { ...miss, modelChanged: true });
+    assert.equal(host.chatContainer.children.length, 2);
+    assert.match(host.chatContainer.children.map(render).join("\n"), /Cache miss after model switch/);
+    assert.ok(!host.chatContainer.children.map(render).join("\n").includes("⚠"));
+  }
+  await commands.get("pretty-tui").handler("clean", commandContext);
+  liveTool.setExpanded(true);
+  // Turning off Pi's notice setting rebuilds the chat without cache nodes.
+  // Its removed projection must not leave an invisible member/collapse tail.
+  const rebuildHost = {
+    ui: { requestRender() {} }, pendingTools: new Map(),
+    settingsManager: { getShowCacheMissNotices: () => false },
+    renderSessionItems: InteractiveMode.prototype.renderSessionItems,
+    chatContainer: { children: [], addChild(child) { this.children.push(child); } },
+  };
+  InteractiveMode.prototype.renderSessionEntries.call(rebuildHost, []);
+  assert.equal(liveTool.render(120).map(stripTerminalSequences).at(-1), "  └─ [↑ Collapse]");
+  console.log("Native cache-miss activity integration passed.");
+}
+
+// Exercise Pi's real rebuild and live-detection entry points, with wrapped
+// child components that cannot be recognized by instanceof or private fields.
+if (typeof InteractiveMode.prototype.maybeShowCacheMissNotice === "function") {
+  const cost = { input: 0.15, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.15 };
+  const coldUsage = { input: 79_000, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 79_000, cost };
+  const warmUsage = { ...coldUsage, input: 0, cacheRead: 79_000, cost: { ...cost, input: 0, total: 0 } };
+  const decorate = (entry, timestamp, usage) => ({ ...entry, message: {
+    ...entry.message, provider: "fixture", model: "fixture", api: "openai-responses", timestamp, usage,
+  } });
+  const previous = decorate(assistant("100", undefined, [], "Previous answer"), 1000, warmUsage);
+  const first = decorate(assistant("101", "100", [{ id: "scoped-cache-first", name: "bash" }]), 2000, coldUsage);
+  const second = decorate(assistant("103", "102", [{ id: "scoped-cache-second", name: "read" }]), 3000, coldUsage);
+  const later = decorate(assistant("106", "105", [{ id: "scoped-cache-later", name: "bash" }]), 4000, warmUsage);
+  const entries = [previous, first, result("102", "101", "scoped-cache-first"), second,
+    result("104", "103", "scoped-cache-second"), user("105", "104"), later,
+    result("107", "106", "scoped-cache-later")];
+  const raw = [];
+  const host = {
+    ui: { requestRender() {} }, pendingTools: new Map(),
+    settingsManager: { getShowCacheMissNotices: () => true, getShowImages: () => false, getImageWidthCells: () => undefined },
+    sessionManager: { getEntries: () => entries, getCwd: () => process.cwd() },
+    session: { modelRuntime: { getModel: () => ({ cost: { cacheRead: 0 } }) } },
+    getMarkdownThemeWithSettings: () => getMarkdownTheme(),
+    getMarkdownTransformers: () => undefined,
+    getUserMessageText: (message) => message.content.map((item) => item.text ?? "").join("\n"),
+    outputPad: undefined,
+    hiddenThinkingLabel: undefined,
+    maybeShowAssistantDiagnostics: () => {},
+    updateFooter: false,
+    hideThinkingBlock: false,
+    getRegisteredToolDefinition: (name) => ({ renderShell: "self", renderCall: () => new Text(name, 0, 0) }),
+    addMessageToChat: InteractiveMode.prototype.addMessageToChat,
+    addCacheMissNotice: InteractiveMode.prototype.addCacheMissNotice,
+    addCustomEntryToChat: () => {},
+    addCompactionCostNotice: () => {},
+    updateEditorBorderColor: () => {},
+    footer: { invalidate: () => {} },
+    renderSessionItems: InteractiveMode.prototype.renderSessionItems,
+    chatContainer: { children: [], addChild(component) {
+      raw.push(component);
+      this.children.push({ render: (width) => component.render(width), invalidate() { component.invalidate?.(); } });
+    } },
+  };
+  await emit("session_start", {}, sessionContext(entries));
+  InteractiveMode.prototype.renderSessionEntries.call(host, entries);
+  const firstTool = raw.find((component) => component.toolCallId === "scoped-cache-first");
+  firstTool.render(120); firstTool.setExpanded(true);
+  const text = (component) => component.render(120).map(stripTerminalSequences).join("\n");
+  const notices = raw.filter((component) => text(component).includes("Cache miss:"));
+  assert.equal(notices.length, 2);
+  for (const notice of notices) assert.match(text(notice), /^  ├─ ⚠ Cache miss: 79k/m,
+    "wrapped rebuild components caused a standalone cache warning");
+  assert.equal(notices.at(-1).render(120).map(stripTerminalSequences).at(-1), "  └─ [↑ Collapse]");
+  const laterTool = raw.find((component) => component.toolCallId === "scoped-cache-later");
+  assert.equal(laterTool.render(120).length, 2, "cache notice was assigned to the last restored group");
+
+  // Live detection must use its argument, not a stale last-rendered message.
+  await emit("session_start", {}, sessionContext(entries.slice(0, 3)));
+  raw.length = 0; host.chatContainer.children = [];
+  host.sessionManager.getEntries = () => [previous];
+  host.addMessageToChat(previous.message);
+  const liveTool = new ToolExecutionComponent("bash", "scoped-cache-first", {}, undefined,
+    host.getRegisteredToolDefinition("bash"), host.ui, process.cwd());
+  liveTool.updateResult({ content: [{ type: "text", text: "Done" }], isError: false });
+  host.chatContainer.addChild(liveTool);
+  InteractiveMode.prototype.maybeShowCacheMissNotice.call(host, first.message);
+  liveTool.render(120); liveTool.setExpanded(true);
+  assert.match(text(raw.at(-1)), /^  ├─ ⚠ Cache miss: 79k/m,
+    "live cache detection did not bind the actual assistant argument");
+  console.log("Wrapped cache-notice rebuild and live entry points passed.");
+}
+
+// A live cache miss arrives at message_end, before the message's tools execute.
+// It must not float above the tree: it joins the group once its tool appears.
+if (typeof InteractiveMode.prototype.maybeShowCacheMissNotice === "function") {
+  const cost = { input: 0.15, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.15 };
+  const warm = { input: 0, output: 0, cacheRead: 79_000, cacheWrite: 0, totalTokens: 79_000,
+    cost: { ...cost, input: 0, total: 0 } };
+  const cold = { input: 79_000, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 79_000, cost };
+  const previous = { ...assistant("110", undefined, [], "Previous answer"),
+    message: { ...assistant("110", undefined, [], "Previous answer").message,
+      provider: "fixture", model: "fixture", timestamp: 1000, usage: warm } };
+  const deferredMessage = { ...assistant("112", "111", [{ id: "deferred-cache-tool", name: "bash" }]).message,
+    provider: "fixture", model: "fixture", timestamp: 2000, usage: cold };
+  await emit("session_start", {}, sessionContext([previous]));
+  const children = [];
+  const host = {
+    ui: { requestRender() {} }, pendingTools: new Map(),
+    settingsManager: { getShowCacheMissNotices: () => true },
+    sessionManager: { getEntries: () => [previous] },
+    session: { modelRuntime: { getModel: () => ({ cost: { cacheRead: 0 } }) } },
+    addCacheMissNotice: InteractiveMode.prototype.addCacheMissNotice,
+    chatContainer: { children, addChild(component) { children.push(component); } },
+  };
+  const before = children.length;
+  InteractiveMode.prototype.maybeShowCacheMissNotice.call(host, deferredMessage);
+  assert.equal(children.length, before, "notice was mounted before its tool existed");
+
+  const tool = new ToolExecutionComponent("bash", "deferred-cache-tool", {}, undefined,
+    { renderShell: "self", renderCall: () => new Text("bash", 0, 0) }, host.ui, process.cwd());
+  tool.updateResult({ content: [{ type: "text", text: "Done" }], isError: false });
+  children.push(tool);
+  await emit("tool_execution_start", { toolCallId: "deferred-cache-tool", toolName: "bash" }, sessionContext([previous]));
+  const notice = children.at(-1);
+  assert.notEqual(notice, tool, "deferred notice was never attached");
+  assert.equal(children.length, before + 2);
+  tool.setExpanded(true); // a collapsed group hides non-first members
+  const toolLines = tool.render(120).map(stripTerminalSequences);
+  assert.match(toolLines.join("\n"), /● (?:Running|Done)\(1 tool call/, "group summary disappeared");
+  assert.match(notice.render(120).map(stripTerminalSequences).join("\n"), /Cache miss: 79k/);
+  assert.equal(notice.render(120).map(stripTerminalSequences)[0], "  ├─ ⚠ Cache miss: 79k tokens re-billed (~$0.15)");
+  console.log("Deferred live cache notice joined its tool group.");
+}
+
 InteractiveMode.prototype.showStatus.call(
   {
     ui: { requestRender() {} },

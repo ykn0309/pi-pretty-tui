@@ -177,6 +177,44 @@ export class ActivityTimeline {
     return this.appendUpdate(group!, updateKey, title, content, persistent, severity);
   }
 
+  /** A native notice is inserted immediately after the message's last member,
+   * even when the rest of the branch was already restored into this timeline. */
+  addUpdateAfterMember(
+    anchorId: string,
+    updateKey: string,
+    title: string,
+    content: string,
+    severity: ActivitySeverity = "info",
+  ): ActivityMember | undefined {
+    const existing = this.memberForUpdate(updateKey);
+    if (existing) return existing;
+    const group = this.groupForMember(anchorId);
+    if (!group) return undefined;
+    const member = this.addUpdateToGroup(group.id, updateKey, title, content, false, severity);
+    if (!member) return undefined;
+    group.members.pop(); // addUpdateToGroup appended this new member
+    const index = group.members.findIndex((child) => child.id === anchorId);
+    group.members.splice(index + 1, 0, member);
+    return member;
+  }
+
+  /** Standalone derived notices must not change the live/last restored group. */
+  addStandaloneUpdate(
+    updateKey: string,
+    title: string,
+    content: string,
+    severity: ActivitySeverity = "info",
+  ): ActivityMember {
+    const existing = this.memberForUpdate(updateKey);
+    if (existing) return existing;
+    const previous = this.currentGroupId;
+    this.currentGroupId = undefined;
+    const member = this.addPendingUpdate(updateKey, title, content, false, severity);
+    this.boundary();
+    this.currentGroupId = previous;
+    return member;
+  }
+
   private appendUpdate(
     group: ActivityGroup,
     updateKey: string,
@@ -235,6 +273,24 @@ export class ActivityTimeline {
   memberForUpdate(updateKey: string): ActivityMember | undefined {
     const memberId = this.updateMembers.get(updateKey);
     return memberId ? this.member(memberId) : undefined;
+  }
+
+  /** Remove a re-derived UI notice without splitting or settling real work. */
+  discardUpdate(updateKey: string): void {
+    const memberId = this.updateMembers.get(updateKey);
+    if (!memberId) return;
+    const group = this.groupForMember(memberId);
+    if (group) {
+      group.members = group.members.filter((member) => member.id !== memberId);
+      if (!group.members.length) {
+        this.groupsById.delete(group.id);
+        this.settledGroups.delete(group.id);
+        if (this.currentGroupId === group.id) this.currentGroupId = undefined;
+      }
+    }
+    this.updateMembers.delete(updateKey);
+    this.memberGroups.delete(memberId);
+    this.membersById.delete(memberId);
   }
 
   /**
