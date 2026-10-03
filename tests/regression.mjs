@@ -40,6 +40,7 @@ const originalPrototypeMethods = [
   ["ToolExecutionComponent.render", ToolExecutionComponent.prototype, "render"],
   ["ToolExecutionComponent.handleMouse", ToolExecutionComponent.prototype, "handleMouse"],
   ["InteractiveMode.setToolsExpanded", InteractiveMode.prototype, "setToolsExpanded"],
+  ["InteractiveMode.toggleToolOutputExpansion", InteractiveMode.prototype, "toggleToolOutputExpansion"],
   ["InteractiveMode.renderSessionEntries", InteractiveMode.prototype, "renderSessionEntries"],
   ["InteractiveMode.switchTuiMode", InteractiveMode.prototype, "switchTuiMode"],
   ["InteractiveMode.showExtensionNotify", InteractiveMode.prototype, "showExtensionNotify"],
@@ -51,6 +52,7 @@ const originalPrototypeMethods = [
   ["InteractiveMode.maybeShowCacheMissNotice", InteractiveMode.prototype, "maybeShowCacheMissNotice"],
   ["InteractiveMode.addMessageToChat", InteractiveMode.prototype, "addMessageToChat"],
   ["TuiAltScreen.handleSelectionMouseEvent", TuiAltScreen.prototype, "handleSelectionMouseEvent"],
+  ["TuiAltScreen.handleMouseEvent", TuiAltScreen.prototype, "handleMouseEvent"],
   ["CustomEditor.render", CustomEditor.prototype, "render"],
   ["CustomEditor.renderTopBorder", CustomEditor.prototype, "renderTopBorder"],
   ["CustomEditor.handleMouse", CustomEditor.prototype, "handleMouse"],
@@ -97,6 +99,35 @@ const theme = {
   bold: (text) => text,
   fg: (_name, text) => text,
 };
+// Exercise Pi's real press/motion/release pipeline, not synthesized clicks.
+const mouseGestureFixture = (component, lines, width = 100, nativeMultiClick = false) => {
+  const height = Math.max(1, lines.length);
+  const rect = { x: 0, y: 0, width, height };
+  // Transcript projections are opaque leaves; do not fabricate layout boxes
+  // for their old native children, whose coordinates no longer match the UI.
+  const box = (item) => ({ component: item, rect, clip: rect, layer: 0, children: [] });
+  const screen = Object.assign(Object.create(TuiAltScreen.prototype), {
+    terminal: { rows: height, columns: width }, previousScreen: lines,
+    currentLayout: { root: box(component), width, height, lines },
+    copyOnSelect: false, hasOverlay: () => false,
+    handleSearchMouseEvent: () => false, handleScrollToEndIndicatorMouseEvent: () => false,
+    handleScrollbarMouseEvent: () => false, handleRightClickPaste: () => false,
+    updateScrollbarHover() {}, stopScrollbarHover() {},
+    stopSelectionAutoScroll() {}, updateSelectionAutoScroll() {}, requestRender() {},
+    dispatchMouseToOverlay: () => ({ hit: false }), applyMouseDispatchResult: () => false,
+  });
+  if (!nativeMultiClick) screen.getClickCount = () => 1;
+  return {
+    screen,
+    gesture(x, y, motions = [], release = undefined) {
+      screen.handleMouseEvent({ button: 0, release: false, x, y });
+      for (const [dx, dy] of motions) screen.handleMouseEvent({ button: 32, release: false, x: x + dx, y: y + dy });
+      const [dx, dy] = release ?? motions.at(-1) ?? [0, 0];
+      screen.handleMouseEvent({ button: 0, release: true, x: x + dx, y: y + dy });
+    },
+  };
+};
+
 const widgetText = () => {
   const factory = widgets.get("pretty-tui-latest-activity");
   if (!factory) return "";
@@ -184,18 +215,42 @@ const renderCollapsedSummaries = async (entries) => {
 };
 const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool/.exec(output)?.[1]));
 
+// Built-in compact call parameters share the muted role with nested calls.
+{
+  const colors = [];
+  const parameterTheme = { ...theme, fg(color, text) { colors.push([text, color]); return text; } };
+  const fixtures = [
+    ["read", { path: "COLOR_PARAMETER" }],
+    ["bash", { command: "COLOR_PARAMETER" }],
+    ["edit", { path: "COLOR_PARAMETER", oldText: "old", newText: "new" }],
+    ["write", { path: "COLOR_PARAMETER", content: "fixture" }],
+    ["grep", { pattern: "COLOR_PARAMETER" }],
+    ["find", { pattern: "COLOR_PARAMETER" }],
+    ["ls", { path: "COLOR_PARAMETER" }],
+  ];
+  for (const [name, args] of fixtures) {
+    colors.length = 0;
+    const component = tools.get(name).renderCall(args, parameterTheme, {
+      toolCallId: `parameter-color-${name}`, expanded: true, executionStarted: true, state: {},
+    });
+    component.render(100);
+    assert.ok(colors.some(([text, color]) => text.includes("COLOR_PARAMETER") && color === "muted"), name);
+    assert.ok(!colors.some(([text, color]) => text.includes("COLOR_PARAMETER") && color === "text"), name);
+  }
+}
+
 // User messages render as transparent, right-aligned chat bubbles. Short text
 // determines the bubble width; long text wraps at 75% of the terminal width.
 {
   const bubbleContext = sessionContext([]);
   bubbleContext.ui.theme = {
     fg(name, text) {
-      return name === "accent" ? `<accent>${text}</accent>` : text;
+      return name === "mdLink" ? `<mdLink>${text}</mdLink>` : text;
     },
   };
   await emit("session_start", {}, bubbleContext);
   const plainLines = (component, width) => component.render(width).map((line) =>
-    stripTerminalSequences(line).replaceAll("<accent>", "").replaceAll("</accent>", ""),
+    stripTerminalSequences(line).replaceAll("<mdLink>", "").replaceAll("</mdLink>", ""),
   );
   const frameBounds = (line) => {
     const start = line.indexOf("╭");
@@ -207,7 +262,7 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
   const shortRaw = shortBubble.render(80);
   const shortLines = plainLines(shortBubble, 80);
   const shortFrame = frameBounds(shortLines[0]);
-  assert.ok(shortRaw[0].includes("<accent>"), shortRaw[0]);
+  assert.ok(shortRaw[0].includes("<mdLink>"), shortRaw[0]);
   assert.ok(!shortLines.join("\n").includes("User"), shortLines.join("\n"));
   assert.equal(shortFrame.width, 10);
   assert.equal(shortFrame.start, 69);
@@ -1579,11 +1634,26 @@ for (const name of ["find", "grep"]) {
   assert.ok(widgetText().includes("Thought details expand individually in clean mode"), widgetText());
   assert.ok(!renderVisibilityThinking().includes("Individually expanded thought detail"));
 
-  visibilityThinking.handleMouse({
-    type: "click", button: "left", x: 4, y: 2, width: 80,
-    height: visibilityThinking.render(80).length,
-  });
+  mouseGestureFixture(visibilityThinking, visibilityThinking.render(80), 80).gesture(4, 2, [[-2, 0]]);
   assert.ok(renderVisibilityThinking().includes("Individually expanded thought detail"));
+
+  // Ctrl+O is also advisory in clean mode, without invoking the expansion API.
+  const expansionRequests = [];
+  const keyboardHost = {
+    toolOutputExpanded: false,
+    setToolsExpanded(value) { expansionRequests.push(value); this.toolOutputExpanded = value; },
+    showStatus: InteractiveMode.prototype.showStatus,
+  };
+  const beforeKeyboardToggle = renderVisibilityThinking();
+  for (const expanded of [false, true]) {
+    keyboardHost.toolOutputExpanded = expanded;
+    InteractiveMode.prototype.toggleToolOutputExpansion.call(keyboardHost);
+    assert.equal(keyboardHost.toolOutputExpanded, expanded);
+    assert.deepEqual(expansionRequests, []);
+    assert.equal(renderVisibilityThinking(), beforeKeyboardToggle);
+    assert.ok(widgetText().includes("Activity details expand individually in clean mode"));
+  }
+  assert.ok(!widgetText().includes("Ctrl+O"));
 
   // Full/compact modes delegate to Pi unchanged, including persistence.
   const commandContext = { hasUI: true, ui: { notify() {} } };
@@ -1595,6 +1665,12 @@ for (const name of ["find", "grep"]) {
   assert.equal(settingWrites, 1);
   assert.equal(nativeVisibilityUpdates, 1);
   assert.equal(nativeStatus, "Thinking blocks: hidden");
+  keyboardHost.toolOutputExpanded = false;
+  InteractiveMode.prototype.toggleToolOutputExpansion.call(keyboardHost);
+  assert.deepEqual(expansionRequests, [true]);
+  await commands.get("pretty-tui").handler("compact", commandContext);
+  InteractiveMode.prototype.toggleToolOutputExpansion.call(keyboardHost);
+  assert.deepEqual(expansionRequests, [true, false]);
   await commands.get("pretty-tui").handler("clean", commandContext);
 }
 
@@ -1711,6 +1787,53 @@ for (const name of ["find", "grep"]) {
   assert.notEqual(warningColor, errorColor);
 }
 
+// Only the Running parent dot pulses; its label and settled dot stay stable.
+{
+  const pulseColors = [];
+  const pulseContext = sessionContext([]);
+  pulseContext.ui.theme = {
+    ...theme,
+    fg(color, text) { pulseColors.push([text, color]); return text; },
+  };
+  await emit("session_start", {}, pulseContext);
+  const originalNow = Date.now;
+  let now = 10_000;
+  Date.now = () => now;
+  try {
+    await emit("agent_start", {}, pulseContext);
+    const message = {
+      role: "assistant", timestamp: 10_000, stopReason: "toolUse",
+      content: [{ type: "thinking", thinking: "Pulse fixture" }],
+    };
+    await emit("message_update", { message }, pulseContext);
+    const component = new AssistantMessageComponent(message);
+    const checkPhase = (dotColor) => {
+      pulseColors.length = 0;
+      const rows = component.render(80).map(stripTerminalSequences);
+      assert.ok(rows.join("\n").includes("● Running(1 thought)"));
+      assert.ok(pulseColors.some(([text, color]) => text === "● " && color === dotColor));
+      assert.ok(pulseColors.some(([text, color]) => text === "Running" && color === "accent"));
+      return rows;
+    };
+    const initial = checkPhase("accent");
+    now += 800;
+    assert.deepEqual(checkPhase("dim"), initial, "pulse must not shift the layout");
+    now += 800;
+    checkPhase("accent");
+    await emit("agent_settled", {}, pulseContext);
+    const settled = () => component.render(80).map(stripTerminalSequences);
+    pulseColors.length = 0;
+    const done = settled();
+    assert.ok(done.join("\n").includes("Done(1 thought)"));
+    assert.ok(pulseColors.some(([text, color]) => text === "● " && color !== "accent" && color !== "dim"));
+    now += 800;
+    assert.deepEqual(settled(), done);
+  } finally {
+    Date.now = originalNow;
+    await emit("session_start", {}, sessionContext([]));
+  }
+}
+
 // A settled agent turn gets a durable completion footer. Duration spans the
 // whole run, Copy includes only the final visible answer, and reload restores
 // the answer association without duplicating the text in footer data.
@@ -1807,6 +1930,15 @@ for (const name of ["find", "grep"]) {
   })?.handled, true);
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(nativeCopies, ["Published answer, first block.\n\nSecond block."]);
+  // Footer Copy consumes press: test the captured-component click path too.
+  for (const motions of [[[0, 0]], [[2, 0]], [[-2, 0]]]) {
+    const before = nativeCopies.length;
+    mouseGestureFixture(liveFooter.component, liveFooter.lines, 80).gesture(copyX, 0, motions);
+    assert.equal(nativeCopies.length, before + 1, "footer Copy must tolerate jitter");
+  }
+  const beforeFooterDrag = nativeCopies.length;
+  mouseGestureFixture(liveFooter.component, liveFooter.lines, 80).gesture(copyX, 0, [[3, 0], [0, 0]]);
+  assert.equal(nativeCopies.length, beforeFooterDrag, "captured controls must not click after real drag");
 
   const restoredAnswer = {
     type: "message",
@@ -1907,6 +2039,114 @@ for (const name of ["find", "grep"]) {
     InteractiveMode.prototype.renderSessionEntries.call({ ui: { mode: "regular" } }, []);
   } catch {}
   assert.ok(!renderFooter().plain[0].includes("[Copy]"));
+}
+
+// User bubbles copy raw prompt text in fullscreen, without stealing code Copy
+// controls, outside clicks, right clicks, wheel events, or selection drags.
+{
+  const copies = [];
+  const flashes = [];
+  const fullscreenUi = {
+    mode: "fullscreen",
+    async copyTextToClipboard(text) { copies.push(text); return true; },
+    flash(message) { flashes.push(message); },
+  };
+  try { InteractiveMode.prototype.renderSessionEntries.call({ ui: fullscreenUi }, []); } catch {}
+  const raw = "  用户 **hello**，这条消息保留原始 Markdown 与空白\n\n```sh\necho bubble\n```\n尾部  \n";
+  const bubble = new UserMessageComponent(raw);
+  const rows = () => bubble.render(100).map(stripTerminalSequences);
+  const click = (x, y, extra = {}) => bubble.handleMouse({
+    type: "click", button: "left", x, y, width: 100, height: rows().length, ...extra,
+  });
+  const left = rows()[0].indexOf("╭");
+  const right = rows()[0].indexOf("╮");
+  assert.ok(left > 0);
+  assert.equal(click(left, 0)?.handled, true);
+  assert.deepEqual(copies, [raw]);
+  const bodyY = rows().findIndex((line) => line.includes("hello"));
+  assert.equal(click(left + 2, bodyY)?.handled, true);
+  assert.deepEqual(copies, [raw, raw]);
+  assert.equal(click(right, rows().length - 1)?.handled, true);
+  assert.equal(copies.at(-1), raw);
+  const beforeIgnored = copies.length;
+  for (const [x, y, extra] of [
+    [left - 1, 0, {}], [right + 1, 0, {}], [left, -1, {}],
+    [left, rows().length, {}], [left, 0, { button: "right" }],
+    [left + 2, bodyY, { type: "drag" }], [left + 2, bodyY, { type: "scroll" }],
+  ]) click(x, y, extra);
+  assert.equal(copies.length, beforeIgnored);
+  // A Markdown-owned click (such as a code Copy control) wins over the bubble.
+  // The host can resolve its own pi-tui copy; inspect its native Markdown class.
+  const probe = new UserMessageComponent("probe");
+  originalPrototypeMethods.find(([label]) => label === "UserMessageComponent.rebuild")[3].call(probe);
+  const nativeContent = probe.children[0];
+  const nativeMarkdownPrototype = Object.getPrototypeOf(nativeContent.children?.[0] ?? nativeContent);
+  const originalMarkdownMouse = nativeMarkdownPrototype.handleMouse;
+  const hadOwnMarkdownMouse = Object.hasOwn(nativeMarkdownPrototype, "handleMouse");
+  const beforeMarkdownClick = copies.length;
+  let forwardedEvent;
+  nativeMarkdownPrototype.handleMouse = (event) => { forwardedEvent = event; return { handled: true }; };
+  try {
+    assert.equal(click(left + 2, bodyY)?.handled, true);
+    assert.equal(forwardedEvent.x, 0);
+    assert.equal(forwardedEvent.y, bodyY - 1);
+    assert.equal(copies.length, beforeMarkdownClick);
+  } finally {
+    if (hadOwnMarkdownMouse) nativeMarkdownPrototype.handleMouse = originalMarkdownMouse;
+    else delete nativeMarkdownPrototype.handleMouse;
+  }
+  bubble.setOutputPad(3);
+  assert.equal(click(rows()[0].indexOf("╭"), 0)?.handled, true);
+  assert.equal(copies.at(-1), raw, "rebuild must preserve bubble copy");
+  // Bubble press falls through to Pi's selection-based click pipeline.
+  const jitterX = rows()[0].indexOf("╭") + 2;
+  const jitterY = rows().findIndex((line) => line.includes("hello"));
+  for (const motions of [[[0, 0]], [[1, 0]], [[-2, 0]], [[1, 0], [-1, 0]]]) {
+    const before = copies.length;
+    mouseGestureFixture(bubble, rows()).gesture(jitterX, jitterY, motions);
+    assert.equal(copies.length, before + 1, `bubble jitter ${JSON.stringify(motions)}`);
+    assert.equal(copies.at(-1), raw);
+  }
+  for (const motions of [[[3, 0]], [[0, 1]], [[3, 0], [0, 0]]]) {
+    const before = copies.length;
+    const fixture = mouseGestureFixture(bubble, rows());
+    fixture.gesture(jitterX, jitterY, motions);
+    assert.equal(copies.length, before, "real drag must not copy a bubble");
+    assert.equal(fixture.screen.selectionDragged, true);
+  }
+  const beforeProtected = copies.length;
+  const overlayFixture = mouseGestureFixture(bubble, rows());
+  overlayFixture.screen.hasOverlay = () => true;
+  overlayFixture.gesture(jitterX, jitterY, [[0, 0]]);
+  const linkFixture = mouseGestureFixture(bubble, rows());
+  linkFixture.screen.previousScreen = rows().map((line) => `\x1b]8;;https://example.com\x07${line}\x1b]8;;\x07`);
+  linkFixture.gesture(jitterX, jitterY, [[0, 0]]);
+  assert.equal(copies.length, beforeProtected, "overlay/link selection must not gain jitter tolerance");
+  // Do not change Pi's double/triple-click word-selection behavior in this fix.
+  const nativeFixture = mouseGestureFixture(bubble, rows(), 100, true);
+  const wordX = visibleWidth(rows()[jitterY].slice(0, rows()[jitterY].indexOf("hello"))) + 2;
+  const perClick = [];
+  for (let i = 0; i < 4; i++) {
+    const before = copies.length;
+    nativeFixture.gesture(wordX, jitterY);
+    perClick.push(copies.length - before);
+  }
+  assert.deepEqual(perClick, [1, 0, 0, 1]);
+  // Ordinary transcript text retains exact native drag detection.
+  let ordinaryClicks = 0;
+  const ordinary = { handleMouse(event) { if (event.type === "click") { ordinaryClicks++; return { handled: true }; } } };
+  const ordinaryFixture = mouseGestureFixture(ordinary, ["ordinary transcript text"]);
+  ordinaryFixture.gesture(5, 0, [[0, 0]]);
+  assert.equal(ordinaryClicks, 0);
+  assert.equal(ordinaryFixture.screen.selectionDragged, true);
+  fullscreenUi.copyTextToClipboard = async () => { throw new Error("clipboard unavailable"); };
+  click(rows()[0].indexOf("╭"), 0);
+  await Promise.resolve();
+  assert.deepEqual(flashes, ["Copy failed"]);
+  try { InteractiveMode.prototype.renderSessionEntries.call({ ui: { mode: "regular" } }, []); } catch {}
+  const beforeRegular = copies.length;
+  assert.equal(click(rows()[0].indexOf("╭"), 0), undefined);
+  assert.equal(copies.length, beforeRegular);
 }
 
 // Fullscreen Markdown shows per-block Copy controls with precise hit regions;
@@ -2109,6 +2349,20 @@ for (const name of ["find", "grep"]) {
   })?.handled, true);
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(nativeCopies, ["const a = 1;", "  keep indentation", "echo mixed response"]);
+  const jitterCode = transcriptMarkdownFixture("```sh\necho jitter\n```");
+  const jitterCodeLines = jitterCode.render(42);
+  const jitterPlain = jitterCodeLines.map(stripTerminalSequences);
+  const jitterY = jitterPlain.findIndex((line) => line.includes("[Copy]"));
+  const jitterX = jitterPlain[jitterY].indexOf("[Copy]") + 1;
+  for (const motions of [[[0, 0]], [[-2, 0]], [[2, 0]]]) {
+    const before = nativeCopies.length;
+    mouseGestureFixture(jitterCode.markdown, jitterCodeLines, 42).gesture(jitterX, jitterY, motions);
+    assert.equal(nativeCopies.length, before + 1, "code Copy must tolerate jitter");
+    assert.equal(nativeCopies.at(-1), "echo jitter");
+  }
+  const beforeCodeDrag = nativeCopies.length;
+  mouseGestureFixture(jitterCode.markdown, jitterCodeLines, 42).gesture(jitterX, jitterY, [[3, 0]]);
+  assert.equal(nativeCopies.length, beforeCodeDrag);
 
   assert.ok(lines.every((line) => visibleWidth(line) <= 42));
   for (const width of [1, 4, 7, 8, 17, 18, 24]) {
@@ -2243,6 +2497,14 @@ for (const key of [...protoPatchKeys, ...symbolPatchKeys]) {
     assert.ok(y >= 0, rows.join("\n"));
     assert.equal(root.handleMouse({ type: "click", button: "left", x: 14, y, width: 120, height: rows.length })?.handled, true);
   };
+  const beforeParentClick = render();
+  clickRow("codemode(");
+  assert.deepEqual(render(), beforeParentClick, "parent title click must not expand details");
+  assert.equal(root.expanded, false);
+  const readRow = render().findIndex((line) => line.includes("read("));
+  mouseGestureFixture(root, render(), 120).gesture(14, readRow, [[2, 0]]);
+  assert.match(render().join("\n"), /PRIVATE CHILD DETAIL/, "nested tool click must tolerate jitter");
+  clickRow("PRIVATE CHILD DETAIL");
   clickRow("read(");
   assert.match(render().join("\n"), /PRIVATE CHILD DETAIL/);
   assert.ok(!render().join("\n").includes("FINAL SCRIPT OUTPUT"));
@@ -2260,8 +2522,41 @@ for (const key of [...protoPatchKeys, ...symbolPatchKeys]) {
   clickRow("[Script]");
   clickRow("[Script]");
   assert.ok(!render().join("\n").includes("const r = await tools"), "header click must still toggle script");
+  const expansionHost = {
+    ui: { requestRender() {} },
+    chatContainer: { children: [root] },
+    loadedResourcesContainer: { children: [] },
+    toolOutputExpanded: false,
+    showStatus() {},
+  };
+  InteractiveMode.prototype.setToolsExpanded.call(expansionHost, true);
+  assert.equal(root.expanded, true);
+  assert.match(render().join("\n"), /PRIVATE CHILD DETAIL/);
+  assert.match(render().join("\n"), /FINAL SCRIPT OUTPUT/);
+  assert.match(render().join("\n"), /const r = await tools/);
+  const globallyExpandedRows = render();
+  clickRow("codemode(");
+  assert.deepEqual(render(), globallyExpandedRows, "parent title click must not collapse details");
+  clickRow("PRIVATE CHILD DETAIL");
+  assert.ok(!render().join("\n").includes("PRIVATE CHILD DETAIL"));
+  assert.match(render().join("\n"), /FINAL SCRIPT OUTPUT/);
+  clickRow("FINAL SCRIPT OUTPUT");
+  assert.ok(!render().join("\n").includes("FINAL SCRIPT OUTPUT"));
+  assert.match(render().join("\n"), /const r = await tools/);
+  clickRow("const r = await tools");
+  assert.ok(!render().join("\n").includes("const r = await tools"));
+  clickRow("read(");
+  assert.match(render().join("\n"), /PRIVATE CHILD DETAIL/);
+  InteractiveMode.prototype.setToolsExpanded.call(expansionHost, false);
+  assert.ok(!render().join("\n").includes("PRIVATE CHILD DETAIL"));
+  InteractiveMode.prototype.setToolsExpanded.call(expansionHost, true);
+  assert.match(render().join("\n"), /FINAL SCRIPT OUTPUT/, "fresh global expansion clears local overrides");
+  InteractiveMode.prototype.setToolsExpanded.call(expansionHost, false);
+  root.setExpanded(true); // reveal the group again, not the details
   for (const width of [1, 12, 40, 80]) assert.ok(render(width).every((line) => visibleWidth(line) <= width));
-  clickRow("[↑ Collapse]");
+  const collapseRows = render();
+  const collapseY = collapseRows.length - 1;
+  mouseGestureFixture(root, collapseRows, 120).gesture(10, collapseY, [[-2, 0]]);
   assert.ok(!render().join("\n").includes("read("));
   assert.ok(!render().join("\n").includes("[↑ Collapse]"));
 
@@ -2301,6 +2596,8 @@ for (const key of [...protoPatchKeys, ...symbolPatchKeys]) {
   const disclosureColors = [];
   const disclosureTheme = { ...theme, fg(color, text) { disclosureColors.push([text, color]); return text; } };
   const oldLines = nested.render(owner, 100, disclosureTheme).lines.join("\n");
+  assert.ok(disclosureColors.some(([text, color]) => stripTerminalSequences(text) === "codemode" && color === "text"));
+  assert.ok(disclosureColors.some(([text, color]) => stripTerminalSequences(text) === "read" && color === "text"));
   assert.ok(disclosureColors.some(([text, color]) => text === "[Script]" && color === "mdLink"));
   assert.ok(disclosureColors.some(([text, color]) => text === "[Script output]" && color === "mdLink"));
   assert.ok(disclosureColors.some(([text, color]) => text === "  ├─ " && color === "dim"));
@@ -2333,6 +2630,13 @@ for (const key of [...protoPatchKeys, ...symbolPatchKeys]) {
   assert.equal(restored.count("big"), NESTED_LIMITS.calls);
   nested.clear();
   nested.start({ toolCallId: "cancel/1", parentToolCallId: "cancel", toolName: "bash", args: {} });
+  disclosureColors.length = 0;
+  const runningLines = nested.render({ toolCallId: "cancel", toolName: "codemode", args: {} }, 100, disclosureTheme).lines.join("\n");
+  const runningDots = disclosureColors.filter(([text]) => text === "● ");
+  assert.equal(runningDots.length, 2, "check both parent and child running dots");
+  assert.ok(runningDots.every(([, color]) => color === "dim"));
+  assert.match(runningLines, /● bash/);
+  assert.ok(!runningLines.includes("… bash"), "running nested tools must use a dot, not an ellipsis");
   assert.deepEqual(nested.finishAll(), ["cancel"]);
   assert.equal(nested.children("cancel")[0].status, "cancelled");
   nested.absorb("wrapper", [{ id: "wrapper/1", name: "mcp.tool", args: "{}", status: "ok" }]);

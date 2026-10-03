@@ -53,9 +53,16 @@ const compactArgs = (value: string): string => {
 export class NestedTools {
   private calls = new Map<string, NestedCall>();
   private incomplete = new Set<string>();
-  private expanded = new Set<string>();
-  clear() { this.calls.clear(); this.incomplete.clear(); this.expanded.clear(); }
-  toggle(key: string) { this.expanded.has(key) ? this.expanded.delete(key) : this.expanded.add(key); }
+  // Local overrides can close one disclosure even after global expansion.
+  private expanded = new Map<string, boolean>();
+  clearExpansion() { this.expanded.clear(); }
+  clear() { this.calls.clear(); this.incomplete.clear(); this.clearExpansion(); }
+  toggle(key: string, globallyExpanded = false) {
+    this.expanded.set(key, !(this.expanded.get(key) ?? globallyExpanded));
+  }
+  private isExpanded(key: string, globallyExpanded: boolean): boolean {
+    return this.expanded.get(key) ?? globallyExpanded;
+  }
   root(id: string): string {
     const seen = new Set<string>();
     while (this.calls.has(id) && !seen.has(id)) {
@@ -184,9 +191,9 @@ export class NestedTools {
     const actions = new Map<number, string>();
     const count = this.count(rootId);
     const failed = [...this.calls.values()].filter((call) => this.root(call.id) === rootId && call.status === "error").length;
-    const color = owner.result?.isError ? "error" : owner.result && !owner.isPartial ? "success" : "accent";
+    const color = owner.result?.isError ? "error" : owner.result && !owner.isPartial ? "success" : "dim";
     const label = owner.toolDefinition?.label ?? owner.toolName;
-    const lines = [theme.fg(color, "● ") + theme.fg("accent", theme.bold(label)) +
+    const lines = [theme.fg(color, "● ") + theme.fg("text", theme.bold(label)) +
       theme.fg("muted", `(${count} nested ${count === 1 ? "call" : "calls"}${failed ? ` · ${failed} failed` : ""})`)];
     const detail = (text: string, prefix: string, action?: string) => {
       const push = (line: string) => {
@@ -207,15 +214,15 @@ export class NestedTools {
     const visit = (call: NestedCall, indent: string, last: boolean, depth: number) => {
       const prefix = indent + (last ? "└─ " : "├─ ");
       const continuation = indent + (last ? "   " : "│  ");
-      const icon = call.status === "running" ? "…" : call.status === "cancelled" ? "⊘" : "●";
-      const callColor = call.status === "ok" ? "success" : call.status === "error" ? "error" : call.status === "running" ? "accent" : "muted";
+      const icon = call.status === "cancelled" ? "⊘" : "●";
+      const callColor = call.status === "ok" ? "success" : call.status === "error" ? "error" : call.status === "running" ? "dim" : "muted";
       actions.set(lines.length, call.id);
       const duration = call.durationMs === undefined ? "" : ` · ${call.durationMs < 1000 ? `${Math.round(call.durationMs)}ms` : `${(call.durationMs / 1000).toFixed(1)}s`}`;
-      lines.push(theme.fg("dim", prefix) + theme.fg(callColor, icon + " ") + theme.fg("accent", theme.bold(call.name)) + theme.fg("muted", `(${compactArgs(call.args)})${duration}`));
-      const expanded = owner.expanded || this.expanded.has(call.id);
+      const descendants = this.children(call.id);
+      lines.push(theme.fg("dim", prefix) + theme.fg(callColor, icon + " ") + theme.fg("text", theme.bold(call.name)) + theme.fg("muted", `(${compactArgs(call.args)})${duration}`));
+      const expanded = this.isExpanded(call.id, Boolean(owner.expanded));
       const first = call.output?.split("\n").find((line) => line.trim());
       const summary = first ?? (call.status === "running" ? "Running…" : call.truncated ? "Output omitted by UI size limit" : call.output === undefined ? "Only call metadata retained" : "No text output");
-      const descendants = this.children(call.id);
       actions.set(lines.length, call.id);
       lines.push(theme.fg("dim", continuation + (descendants.length ? "├ " : "└ ")) + theme.fg(call.status === "error" ? "error" : "muted", summary));
       if (expanded) {
@@ -231,13 +238,13 @@ export class NestedTools {
     if (code) {
       const key = `${rootId}:script`;
       actions.set(lines.length, key); lines.push(theme.fg("dim", "  ├─ ") + theme.fg("mdLink", "[Script]"));
-      if (owner.expanded || this.expanded.has(key)) detail(code, "  │  ", key);
+      if (this.isExpanded(key, Boolean(owner.expanded))) detail(code, "  │  ", key);
     }
     items.forEach((call) => visit(call, "  ", false, 0));
     const key = `${rootId}:output`;
     actions.set(lines.length, key);
     lines.push(theme.fg("dim", "  └─ ") + theme.fg("mdLink", code ? "[Script output]" : "[Output]"));
-    if (owner.expanded || this.expanded.has(key)) detail(resultText(owner.result) || (owner.isPartial || !owner.result ? "Running…" : "No text output"), "     ", key);
+    if (this.isExpanded(key, Boolean(owner.expanded))) detail(resultText(owner.result) || (owner.isPartial || !owner.result ? "Running…" : "No text output"), "     ", key);
     if (this.incomplete.has(rootId)) lines.push(theme.fg("warning", "  [Nested call record is incomplete or truncated]"));
     return { lines: lines.map((line) => truncateToWidth(line, Math.max(1, width), "…")), actions };
   }
