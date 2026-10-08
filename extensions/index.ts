@@ -99,6 +99,11 @@ export default function prettyTui(pi: ExtensionAPI) {
   let fullscreenTui = false;
   const mouseClickHitTests = new WeakMap<object, (event: any) => boolean>();
   let currentTui: any;
+  let currentPromptEditor: any;
+  const runningColor = (theme: any, text: string): string =>
+    typeof currentPromptEditor?.borderColor === "function"
+      ? currentPromptEditor.borderColor(text)
+      : theme.fg("border", text);
   let currentExtensionUi: any;
   let changingAllToolsExpansion = false;
   const latestActivityWidgetKey = "pretty-tui-latest-activity";
@@ -722,6 +727,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     const originalEditorHandleMouse = customEditorPrototype.handleMouse;
     const patchedEditorTopBorder = function (this: any, width: number, hiddenLineCount: number): string {
       if (this.tui) currentTui = this.tui;
+      currentPromptEditor = this;
       const indicator = this.workingStatusIndicator;
       if (renderMode !== "clean" || indicator?.kind !== "working" || responseRunStartedAt === undefined) {
         return originalEditorTopBorder.call(this, width, hiddenLineCount);
@@ -743,6 +749,7 @@ export default function prettyTui(pi: ExtensionAPI) {
       }
     };
     const patchedEditorRender = function (this: any, width: number): string[] {
+      currentPromptEditor = this;
       if (width < 3) return originalEditorRender.call(this, width);
 
       const innerWidth = width - 2;
@@ -786,6 +793,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     customEditorPrototype.handleMouse = patchedEditorHandleMouse;
 
     pi.on("session_shutdown", () => {
+      currentPromptEditor = undefined;
       const patch = customEditorPrototype[editorFramePatchKey];
       if (!patch) return;
       if (patch.patchedRender === customEditorPrototype.render) {
@@ -2254,17 +2262,23 @@ export default function prettyTui(pi: ExtensionAPI) {
       );
       const buttonStart = visibleWidth(topPrefix) + fillWidth + (showCopyButton ? 1 : 0);
       const topRule = topPrefix + "─".repeat(fillWidth) + topSuffix;
-      const styledTopRule = this.theme.codeBlockBorder(topRule);
+      const frameBorder = (text: string) => currentExtensionUi?.theme?.fg
+        ? currentExtensionUi.theme.fg("borderMuted", text)
+        : this.theme.codeBlockBorder(text);
+      // Keep labels and Copy at their original contrast; soften only the frame.
+      const styledTopRule = frameBorder("╭─ ") + this.theme.codeBlockBorder(label + " ") +
+        frameBorder("─".repeat(fillWidth)) +
+        (showCopyButton ? this.theme.codeBlockBorder(` ${copyLabel} `) : "") + frameBorder("╮");
       const framedCodeWidth = Math.max(1, frameWidth - 4);
       const lines = [
         styledTopRule,
         ...codeLines.map((line) =>
-          this.theme.codeBlockBorder("│ ") +
+          frameBorder("│ ") +
           line +
           " ".repeat(Math.max(0, framedCodeWidth - visibleWidth(line))) +
-          this.theme.codeBlockBorder(" │")
+          frameBorder(" │")
         ),
-        this.theme.codeBlockBorder(`╰${"─".repeat(Math.max(0, frameWidth - 2))}╯`),
+        frameBorder(`╰${"─".repeat(Math.max(0, frameWidth - 2))}╯`),
       ];
 
       if (showCopyButton && Array.isArray(this[codeBlockCollectionKey])) {
@@ -3164,7 +3178,8 @@ export default function prettyTui(pi: ExtensionAPI) {
     const activityText = /^thinking(?:\.\.\.)?$/iu.test(normalizedActivityText)
       ? "thinking"
       : rawActivityText;
-    const countLabel = count > 0 ? `${count} tool ${count === 1 ? "call" : "calls"}` : "";
+    const totalCalls = count + nestedCount;
+    const countLabel = totalCalls > 0 ? `${totalCalls} tool ${totalCalls === 1 ? "call" : "calls"}` : "";
     const thoughtLabel = thoughtCount > 0
       ? `${thoughtCount} ${thoughtCount === 1 ? "thought" : "thoughts"}`
       : "";
@@ -3173,7 +3188,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     const activityLabel = count > 0 && activityText !== "done" && activityText.trim()
       ? activityText
       : "";
-    return [countLabel, nestedCount ? `${nestedCount} nested ${nestedCount === 1 ? "call" : "calls"}` : "", thoughtLabel, activityLabel].filter(Boolean).join(" · ");
+    return [countLabel, thoughtLabel, activityLabel].filter(Boolean).join(" · ");
   };
 
   const summaryRow = (
@@ -3190,19 +3205,24 @@ export default function prettyTui(pi: ExtensionAPI) {
       const dimPhase = responseRunStartedAt !== undefined &&
         Math.floor(Math.max(0, Date.now() - responseRunStartedAt) / RUNNING_DOT_INTERVAL_MS) % 2 === 1;
       const color = currentActivity === "done"
-        ? collapsedDone ? "thinkingText" : "success"
+        ? collapsedDone ? "dim" : "success"
         : dimPhase ? "dim" : "accent";
-      return theme.fg(color, "● ");
+      return currentActivity !== "done" && !dimPhase
+        ? runningColor(theme, "● ")
+        : theme.fg(color, "● ");
     },
     continuation: "  ",
     content: () => {
       const currentActivity = typeof activity === "function" ? activity() : activity;
       const label = currentActivity === "done" ? "Done" : "Running";
       const color = label === "Done"
-        ? collapsedDone ? "thinkingText" : "success"
+        ? collapsedDone ? "dim" : "success"
         : "accent";
-      const detailColor = label === "Done" && collapsedDone ? "thinkingText" : "text";
-      return theme.fg(color, theme.bold(label)) +
+      const detailColor = label === "Done" && collapsedDone ? "dim" : "text";
+      const title = label === "Running"
+        ? runningColor(theme, theme.bold(label))
+        : theme.fg(color, theme.bold(label));
+      return title +
         theme.fg("dim", "(") +
         theme.fg(detailColor, summaryText(count, failed, thoughtCount, currentActivity, nestedCount)) +
         theme.fg("dim", ")");

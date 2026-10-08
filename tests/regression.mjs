@@ -1796,6 +1796,11 @@ for (const name of ["find", "grep"]) {
     fg(color, text) { pulseColors.push([text, color]); return text; },
   };
   await emit("session_start", {}, pulseContext);
+  let borderRole = "input-border";
+  const pulseEditor = {
+    borderColor(text) { pulseColors.push([text, borderRole]); return text; },
+  };
+  CustomEditor.prototype.renderTopBorder.call(pulseEditor, 80, 0);
   const originalNow = Date.now;
   let now = 10_000;
   Date.now = () => now;
@@ -1812,22 +1817,30 @@ for (const name of ["find", "grep"]) {
       const rows = component.render(80).map(stripTerminalSequences);
       assert.ok(rows.join("\n").includes("● Running(1 thought)"));
       assert.ok(pulseColors.some(([text, color]) => text === "● " && color === dotColor));
-      assert.ok(pulseColors.some(([text, color]) => text === "Running" && color === "accent"));
+      assert.ok(pulseColors.some(([text, color]) => text === "Running" && color === borderRole));
       return rows;
     };
-    const initial = checkPhase("accent");
+    const initial = checkPhase(borderRole);
     now += 800;
     assert.deepEqual(checkPhase("dim"), initial, "pulse must not shift the layout");
     now += 800;
-    checkPhase("accent");
+    borderRole = "changed-input-border";
+    checkPhase(borderRole); // Changes to the live editor border are reflected immediately.
     await emit("agent_settled", {}, pulseContext);
     const settled = () => component.render(80).map(stripTerminalSequences);
     pulseColors.length = 0;
     const done = settled();
     assert.ok(done.join("\n").includes("Done(1 thought)"));
-    assert.ok(pulseColors.some(([text, color]) => text === "● " && color !== "accent" && color !== "dim"));
+    for (const text of ["● ", "Done", "1 thought"]) {
+      assert.ok(pulseColors.some(([value, color]) => value === text && color === "dim"), text);
+    }
     now += 800;
     assert.deepEqual(settled(), done);
+    component.handleMouse({ type: "click", button: "left", x: 4, y: 1, width: 80, height: done.length });
+    pulseColors.length = 0;
+    settled();
+    assert.ok(pulseColors.some(([text, color]) => text === "Done" && color === "success"));
+    assert.ok(pulseColors.some(([text, color]) => text === "● " && color === "success"));
   } finally {
     Date.now = originalNow;
     await emit("session_start", {}, sessionContext([]));
@@ -2242,6 +2255,16 @@ for (const name of ["find", "grep"]) {
   const narrowHeading = transcriptMarkdownFixture("# Narrow heading").render(5);
   assert.ok(narrowHeading.every((line) => visibleWidth(line) <= 5));
 
+  const borderColors = [];
+  const codeBorderContext = sessionContext([]);
+  codeBorderContext.ui.theme = {
+    ...theme,
+    fg(color, text) {
+      borderColors.push([text, color]);
+      return color === "borderMuted" ? `\x1b[38;5;240m${text}\x1b[39m` : text;
+    },
+  };
+  await emit("session_start", {}, codeBorderContext);
   const markdownFixture = transcriptMarkdownFixture(
     "```ts\nconst a = 1;\n```\n\n~~~json\n{\"ok\":true}\n~~~",
     markdownTheme,
@@ -2250,6 +2273,12 @@ for (const name of ["find", "grep"]) {
   );
   const { markdown } = markdownFixture;
   const lines = markdownFixture.render(42);
+  assert.ok(borderColors.some(([text, color]) => text === "╭─ " && color === "borderMuted"));
+  assert.ok(borderColors.some(([text, color]) => text === "│ " && color === "borderMuted"));
+  assert.ok(borderColors.some(([text, color]) => text.startsWith("╰─") && color === "borderMuted"));
+  assert.ok(!borderColors.some(([text]) => text.includes("[Copy]") || text.includes("const a")));
+  assert.ok(lines.some((line) => line.includes("\x1b[90mts ")));
+  assert.ok(lines.some((line) => line.includes("\x1b[90m [Copy] ")));
   const plain = lines.map((line) => line.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, ""));
   const headers = plain.map((line, y) => ({ line, y })).filter(({ line }) => line.includes("[Copy]"));
   assert.equal(headers.length, 2);
@@ -2469,7 +2498,8 @@ for (const key of [...protoPatchKeys, ...symbolPatchKeys]) {
   await start(`${parentId}/2/1`, "grep", { pattern: "fixture" }, `${parentId}/2`);
   root.setExpanded(true); // reveal the group without expanding all details
   const render = (width = 120) => root.render(width).map(stripTerminalSequences);
-  assert.match(render().join("\n"), /1 tool call · 3 nested calls/);
+  assert.match(render().join("\n"), /Running\(4 tool calls/);
+  assert.ok(!render()[1].includes("nested calls"), "summary must merge top-level and nested counts");
   assert.match(render().join("\n"), /Running…/);
   assert.ok(!render().join("\n").includes("HIDDEN_SECRET"));
   await emit("tool_execution_update", {
@@ -2486,7 +2516,7 @@ for (const key of [...protoPatchKeys, ...symbolPatchKeys]) {
   nestedNow += 2000; // expire the existing minimum tool-status hold
   await emit("agent_settled");
   let lines = render();
-  assert.match(lines.join("\n"), /Done\(1 tool call · 3 nested calls/);
+  assert.match(lines.join("\n"), /Done\(4 tool calls/);
   assert.match(lines.join("\n"), /3 nested calls · 1 failed/);
   assert.ok(!lines.join("\n").includes("PRIVATE CHILD DETAIL"));
   assert.ok(!lines.join("\n").includes("FINAL SCRIPT OUTPUT"));
@@ -2576,7 +2606,7 @@ for (const key of [...protoPatchKeys, ...symbolPatchKeys]) {
   restored.updateResult(rootResult);
   restored.render(120); restored.setExpanded(true);
   let rows = restored.render(120).map(stripTerminalSequences);
-  assert.match(rows.join("\n"), /1 tool call · 3 nested calls/);
+  assert.match(rows.join("\n"), /Done\(4 tool calls/);
   const y = rows.findIndex((line) => line.includes("read("));
   restored.handleMouse({ type: "click", button: "left", x: 14, y, width: 120, height: rows.length });
   assert.match(restored.render(120).map(stripTerminalSequences).join("\n"), /PRIVATE CHILD DETAIL/);
@@ -2684,7 +2714,7 @@ for (const key of [...protoPatchKeys, ...symbolPatchKeys]) {
     await emit("tool_execution_end", { toolCallId: parentId, toolName: "codemode", result: output, isError: false });
     tool.updateResult({ ...output, isError: false }); tool.setExpanded(true);
     let lines = tool.render(100).map(stripTerminalSequences);
-    assert.match(lines.join("\n"), /1 tool call · 2 nested calls/);
+    assert.match(lines.join("\n"), /(?:Running|Done)\(3 tool calls/);
     assert.ok(lines.some((line) => line.includes("fixture(path=one.txt)")));
     assert.ok(lines.some((line) => line.includes("fixture(path=two.txt)")));
     assert.ok(!lines.join("\n").includes("NATIVE NESTED DETAIL"));

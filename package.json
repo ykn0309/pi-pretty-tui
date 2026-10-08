@@ -1,6 +1,6 @@
 {
   "name": "pi-pretty-tui",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "description": "A beautiful, polished TUI for the Pi coding agent",
   "license": "MIT",
   "author": "Kainan Yang <ykn0309@whu.edu.cn>",
@@ -39,8 +39,8 @@
     "@earendil-works/pi-tui": "*"
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "1.0.1",
-    "@earendil-works/pi-tui": "1.0.1",
+    "@earendil-works/pi-coding-agent": "1.1.0",
+    "@earendil-works/pi-tui": "1.1.0",
     "@types/node": "^24.0.0",
     "jiti": "^2.7.0",
     "typescript": "^5.9.0"
