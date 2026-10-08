@@ -509,6 +509,55 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
   assert.ok(!responseBoundaryText.includes("responding"));
 }
 
+// A group closed before its root tool completed must not keep consuming the
+// next group's global live counters. Only the current ActivityTimeline group may
+// render Running; historical groups fall back to Done rather than stale snapshots.
+{
+  const originalNow = Date.now;
+  let now = 20_000;
+  Date.now = () => now;
+  try {
+    await emit("session_start", {}, sessionContext([]));
+    await emit("agent_start");
+    await emit("tool_execution_start", { toolName: "fabric_exec", toolCallId: "orphaned-root" });
+    await emit("message_update", {
+      message: {
+        role: "assistant",
+        timestamp: 9988,
+        content: [{ type: "text", text: "Boundary while the prior tool is pending" }],
+      },
+    });
+    await emit("tool_execution_start", { toolName: "fabric_exec", toolCallId: "current-root" });
+
+    const makeRoot = (toolCallId) => new ToolExecutionComponent(
+      "fabric_exec",
+      toolCallId,
+      {},
+      undefined,
+      { renderShell: "self", renderCall: () => new Text("fabric", 0, 0) },
+      { requestRender() {} },
+      process.cwd(),
+    );
+    const orphanedText = makeRoot("orphaned-root").render(100).join("\n")
+      .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
+    const currentText = makeRoot("current-root").render(100).join("\n")
+      .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
+    assert.ok(orphanedText.includes("Done(1 tool call)"), orphanedText);
+    assert.ok(!orphanedText.includes("Running("), orphanedText);
+    assert.ok(currentText.includes("Running("), currentText);
+
+    now += 2_000;
+    await emit("tool_execution_end", { toolName: "fabric_exec", toolCallId: "current-root", isError: false });
+    await emit("agent_settled");
+    const settledText = makeRoot("current-root").render(100).join("\n")
+      .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
+    assert.ok(settledText.includes("Done(1 tool call)"), settledText);
+    assert.ok(!settledText.includes("Running("), settledText);
+  } finally {
+    Date.now = originalNow;
+  }
+}
+
 // Assistant/system errors are standalone hard boundaries, so a later retry
 // starts a fresh activity group.
 {
@@ -1165,7 +1214,8 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
   const collapsedThinking = thinkingComponent.render(80);
   const collapsedTool = toolComponent.render(80);
   const collapsedThinkingText = collapsedThinking.join("\n").replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
-  assert.ok(collapsedThinkingText.includes("Running("));
+  assert.ok(collapsedThinkingText.includes("Done("), collapsedThinkingText);
+  assert.ok(!collapsedThinkingText.includes("Running("), collapsedThinkingText);
   assert.ok(collapsedThinkingText.includes("1 thought"));
   assert.ok(!collapsedThinkingText.includes("Footer info"));
   assert.equal(collapsedTool.length, 0);
@@ -1365,7 +1415,8 @@ for (const name of ["find", "grep"]) {
     ...retryTool.render(80),
   ].join("\n").replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
   assert.ok(!failedRendered.includes("Implementing Markdown render helper"));
-  assert.ok(failedRendered.includes("Running("));
+  assert.ok(failedRendered.includes("Done("), failedRendered);
+  assert.ok(!failedRendered.includes("Running("), failedRendered);
   assert.ok(retryRendered.includes("Implementing Markdown component caching"));
 }
 
