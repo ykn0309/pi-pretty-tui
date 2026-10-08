@@ -420,6 +420,10 @@ export default function prettyTui(pi: ExtensionAPI) {
       }
     }
   };
+  const requestActivityRender = (group?: ActivityGroup): void => {
+    if (group) refreshActivityGroup(group);
+    currentTui?.requestRender?.();
+  };
   const revealActivityGroup = (group: ActivityGroup, ui?: any): void => {
     collapsedActivityGroups.delete(group.id);
     revealedActivityGroups.add(group.id);
@@ -3103,6 +3107,7 @@ export default function prettyTui(pi: ExtensionAPI) {
   }
 
   const finishCleanGroup = (activity = cleanRun.activity ?? "done") => {
+    const activeGroup = activityTimeline.currentGroup();
     if (cleanRun.lastCompletedToolCallId && cleanRun.count > 0) {
       const group: ToolSummaryGroup = {
         count: cleanRun.count,
@@ -3129,6 +3134,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     cleanRun.activeToolCallId = undefined;
     cleanRun.activeToolName = undefined;
     activityTimeline.boundary();
+    requestActivityRender(activeGroup);
   };
 
   closeCleanAtNativeCustomBoundary = () => {
@@ -3256,6 +3262,10 @@ export default function prettyTui(pi: ExtensionAPI) {
     const toolCount = group.toolCallIds.length;
     const nestedCount = group.toolCallIds.reduce((count, id) => count + nestedTools.count(id), 0);
     const live = () => cleanRun.activeToolName ?? currentCleanActivity();
+    const currentGroup = activityTimeline.currentGroup();
+    const isLiveGroup = currentGroup?.id === group.id &&
+      !activityTimeline.isSettled(group.id) &&
+      !cleanRun.settled;
     if (settled) {
       return fit(block([summaryRow(
         summaryTheme,
@@ -3267,8 +3277,8 @@ export default function prettyTui(pi: ExtensionAPI) {
         nestedCount,
       )]).render(width));
     }
-    if (owner && !cleanRun.settled) {
-      // Live tool group: keep the current tool name and the running count.
+    if (owner && isLiveGroup) {
+      // Only the current, unsettled group may consume live run state.
       return fit(block([summaryRow(
         summaryTheme,
         Math.max(toolCount, liveCleanToolCount()),
@@ -3279,8 +3289,8 @@ export default function prettyTui(pi: ExtensionAPI) {
         nestedCount,
       )]).render(width));
     }
-    if (!owner && !activityTimeline.isSettled(group.id)) {
-      // Thought-only group while the model is still working.
+    if (!owner && isLiveGroup) {
+      // Thought-only current group while the model is still working.
       return fit(block([summaryRow(
         summaryTheme,
         toolCount,
@@ -3314,6 +3324,11 @@ export default function prettyTui(pi: ExtensionAPI) {
     cleanToolThemes.set(toolCallId, theme);
     const activityGroup = activityTimeline.groupForTool(toolCallId);
     if (activityGroup) activityFallbackThemes.set(activityGroup.id, theme);
+    const isLiveGroup = !activityGroup || (
+      activityTimeline.currentGroup()?.id === activityGroup.id &&
+      !activityTimeline.isSettled(activityGroup.id) &&
+      !cleanRun.settled
+    );
     return {
       render(width: number): string[] {
         if (renderMode !== "clean") return [];
@@ -3331,7 +3346,7 @@ export default function prettyTui(pi: ExtensionAPI) {
         }
         if (cleanRun.settled) return [];
 
-        if (cleanRun.activeToolCallId === toolCallId) {
+        if (isLiveGroup && cleanRun.activeToolCallId === toolCallId) {
           return block([summaryRow(
             theme,
             liveCleanToolCount(),
@@ -3344,6 +3359,7 @@ export default function prettyTui(pi: ExtensionAPI) {
         // The active tool owns the live Running row. Keep the latest completed
         // portion hidden while that tool's minimum display time is running.
         if (
+          isLiveGroup &&
           cleanRun.lastCompletedToolCallId === toolCallId &&
           cleanRun.count > 0 &&
           !cleanRun.activeToolCallId
@@ -3949,6 +3965,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     cleanRun.active = true;
     cleanRun.activeToolCallId = event.toolCallId;
     beginToolActivity(event.toolCallId, displayName, true);
+    requestActivityRender(activityTimeline.groupForTool(event.toolCallId));
   });
   pi.on("tool_execution_update", (event) => {
     if ((event as any).parentToolCallId) {
@@ -3990,6 +4007,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     }
     const visibleSummaryToolCallId = cleanRun.activeToolCallId ?? cleanRun.lastCompletedToolCallId;
     setCleanGroupMembers(visibleSummaryToolCallId, cleanRun.currentToolCallIds.slice());
+    requestActivityRender(activityTimeline.groupForTool(event.toolCallId));
     // Tool success and failure remain owned by the activity group. The bottom
     // line is reserved for transient UI status messages.
   });
@@ -4029,6 +4047,8 @@ export default function prettyTui(pi: ExtensionAPI) {
     cleanRun.activeToolName = undefined;
     cleanRun.activity = "done";
     cleanRun.settled = true;
+    for (const group of activityTimeline.groups()) refreshActivityGroup(group);
+    currentTui?.requestRender?.();
 
     if (responseRunStartedAt !== undefined) {
       // message_end runs before later extensions can replace the message and
