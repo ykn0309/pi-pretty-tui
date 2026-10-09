@@ -1481,6 +1481,69 @@ for (const name of ["find", "grep"]) {
   assert.ok(renderedErrors.includes("Retry failed after 3 attempts"));
 }
 
+// Adjacent identical errors are visual runs only; full payload/source/type
+// identity matters, and any intervening component terminates the run.
+{
+  await emit("session_start", {}, sessionContext([]));
+  const children = [];
+  const host = {
+    ui: { requestRender() {} },
+    chatContainer: { children, addChild(component) { children.push(component); } },
+  };
+  const show = (text) => InteractiveMode.prototype.showError.call(host, text);
+  const plain = (width = 100) => children.flatMap((component) => component.render(width)).map(stripTerminalSequences).join("\n");
+  show("Error\nWebSocket error");
+  show("Error\nfetch failed");
+  show("Error\nfetch failed");
+  assert.match(plain(), /✕ Error · WebSocket error\n✕ Error · fetch failed ×2/);
+  assert.deepEqual(children[2].render(100), []);
+  show("Error\nfetch failed");
+  assert.match(plain(), /fetch failed ×3/);
+  children.push(new Text("A message boundary", 0, 0));
+  show("Error\nfetch failed");
+  assert.equal((plain().match(/fetch failed/g) ?? []).length, 2);
+  show("Error\nfetch failed\nSecond line differs");
+  assert.match(plain(), /Second line differs/);
+  assert.ok(!plain().includes("×4"));
+  show("Different title\nfetch failed");
+  assert.match(plain(), /Different title · fetch failed/);
+
+  const rawMessage = { role: "assistant", timestamp: "compact-error-1", stopReason: "error", errorMessage: "fetch failed", content: [] };
+  const rawBefore = JSON.stringify(rawMessage);
+  const first = new AssistantMessageComponent(rawMessage);
+  const secondMessage = { ...rawMessage, timestamp: "compact-error-2" };
+  const second = new AssistantMessageComponent(secondMessage);
+  const third = new AssistantMessageComponent({ ...rawMessage, timestamp: "compact-error-3" });
+  children.push(first, second, third);
+  assert.match(plain(), /✕ Error · fetch failed ×3/);
+  assert.deepEqual(second.render(100), []);
+  assert.deepEqual(third.render(100), []);
+  assert.equal(JSON.stringify(rawMessage), rawBefore);
+  // Same title/body but runtime and assistant failures are distinct types.
+  show("Error\nfetch failed");
+  assert.ok(children.at(-1).render(100).length > 0);
+  assert.ok(!plain().includes("×4"));
+  const multiline = "same first line\n  exact indentation\n" + "FULL_ERROR_DETAIL ".repeat(12);
+  show("Error\n" + multiline);
+  show("Error\n" + multiline);
+  const lines = children.at(-2).render(30).map(stripTerminalSequences);
+  assert.ok(lines.every((line) => visibleWidth(line) <= 30));
+  assert.match(lines.join("\n"), /×2/);
+  assert.equal((lines.join("").match(/FULL_ERROR_DETAIL/g) ?? []).length, 12);
+  assert.ok(!lines.join("\n").includes("…"));
+  // Rebuild the same pure assistant sequence without relying on render order.
+  const restored = [first, second, third].map((component, index) => new AssistantMessageComponent({ ...rawMessage, timestamp: `restored-error-${index}` }));
+  children.splice(0, children.length, ...restored);
+  restored[2].render(100); // suppressed even when it renders before its owner
+  assert.match(plain(), /✕ Error · fetch failed ×3/);
+  assert.equal(children.length, 3, "UI folding must not remove original components");
+  const commandContext = { hasUI: true, ui: { notify() {} } };
+  await commands.get("pretty-tui").handler("full", commandContext);
+  assert.ok(restored.every((component) => component.render(100).length > 0));
+  await commands.get("pretty-tui").handler("clean", commandContext);
+  assert.match(plain(), /fetch failed ×3/);
+}
+
 // Regression: while the current group holds only a thought, a notification and
 // a renderer-less custom message still join that group. Both used to fall into
 // the tool-only refusal branch, which threw inside ctx.ui.notify and left the

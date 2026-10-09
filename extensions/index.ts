@@ -100,6 +100,32 @@ export default function prettyTui(pi: ExtensionAPI) {
   const mouseClickHitTests = new WeakMap<object, (event: any) => boolean>();
   let currentTui: any;
   let currentPromptEditor: any;
+  let errorChatContainer: any;
+  const runtimeErrorDescriptors = new WeakMap<object, { source: string; title: string; content: string }>();
+  const errorDescriptor = (component: any) => {
+    const runtime = runtimeErrorDescriptors.get(component);
+    if (runtime) return runtime;
+    if (!(component instanceof AssistantMessageComponent)) return undefined;
+    const message = (component as any).lastMessage;
+    if (message?.stopReason !== "error" || (message.content ?? []).some((item: any) =>
+      item.type === "toolCall" || item.type === "thinking" || item.type === "text" && item.text?.length)) return undefined;
+    return { source: "assistant:error", title: "Error", content: String(message.errorMessage ?? "") };
+  };
+  const errorRun = (component: any) => {
+    const children: any[] = errorChatContainer?.children ?? [];
+    const index = children.indexOf(component);
+    const descriptor = errorDescriptor(component);
+    const same = (other: any) => {
+      const value = errorDescriptor(other);
+      return descriptor && value && value.source === descriptor.source &&
+        value.title === descriptor.title && value.content === descriptor.content;
+    };
+    if (index < 0 || !descriptor) return { hidden: false, count: 1, compact: false };
+    let count = 1;
+    while (index + count < children.length && same(children[index + count])) count++;
+    return { hidden: index > 0 && Boolean(same(children[index - 1])), count,
+      compact: index > 0 && Boolean(errorDescriptor(children[index - 1])) };
+  };
   const runningColor = (theme: any, text: string): string =>
     typeof currentPromptEditor?.borderColor === "function"
       ? currentPromptEditor.borderColor(text)
@@ -553,7 +579,31 @@ export default function prettyTui(pi: ExtensionAPI) {
     );
   };
 
-  const renderPendingActivityUpdate = (member: ActivityMember, width: number): string[] => {
+  const renderStandaloneError = (member: ActivityMember, width: number, component?: any): string[] => {
+    const run = component ? errorRun(component) : { hidden: false, count: 1, compact: false };
+    if (run.hidden) return [];
+    const theme = defaultActivityTheme();
+    const style = activityUpdateStyle(member, theme);
+    const original = component ? errorDescriptor(component) : undefined;
+    const title = stripTerminalSequences(original?.title ?? member.updateTitle ?? "Error");
+    const content = stripTerminalSequences(original?.content || member.updateContent || "");
+    const heading = style.icon + style.title(title);
+    const prefix = heading + (content ? theme.fg("dim", " · ") : "");
+    const text = prefix + theme.fg("muted", content) + (run.count > 1 ? theme.fg("dim", ` ×${run.count}`) : "");
+    // Wrap rather than truncate; all original detail lines remain accessible.
+    const continuation = " ".repeat(Math.min(visibleWidth(prefix), Math.max(0, Math.floor(width / 3))));
+    const rows: string[] = [];
+    for (const line of text.split("\n")) {
+      const wrapped = wrapTextWithAnsi(line, Math.max(1, width - visibleWidth(continuation)));
+      rows.push(...wrapped.map((row, index) => (rows.length || index ? continuation : "") + row));
+    }
+    return [...(run.compact ? [] : [""]), ...rows.map((line) => truncateToWidth(line, Math.max(1, width), ""))];
+  };
+
+  const renderPendingActivityUpdate = (member: ActivityMember, width: number, component?: any): string[] => {
+    if (member.updateSeverity === "error" && member.updateTitle !== "Response truncated") {
+      return renderStandaloneError(member, width, component);
+    }
     const theme = defaultActivityTheme();
     const title = truncateToWidth(member.updateTitle ?? "Update", Math.max(1, width - 2), "…");
     const style = activityUpdateStyle(member, theme);
@@ -572,8 +622,9 @@ export default function prettyTui(pi: ExtensionAPI) {
     group: ActivityGroup,
     member: ActivityMember,
     width: number,
+    component?: any,
   ): string[] => {
-    if (!activityGroupCollapsible(group)) return renderPendingActivityUpdate(member, width);
+    if (!activityGroupCollapsible(group)) return renderPendingActivityUpdate(member, width, component);
     const position = activityMemberPosition(group, member);
     if (!activityGroupRevealed(group)) {
       return position.first
@@ -1242,7 +1293,7 @@ export default function prettyTui(pi: ExtensionAPI) {
         const terminalGroup = activityTimeline.groupForMember(terminalMember.id);
         if (!terminalGroup) return originalRender.call(this, width);
         activityUpdateComponents.set(terminalMember.id, this);
-        return renderActivityUpdateProjection(terminalGroup, terminalMember, width);
+        return renderActivityUpdateProjection(terminalGroup, terminalMember, width, this);
       }
 
       const key = assistantMessageKey(message);
@@ -1507,10 +1558,14 @@ export default function prettyTui(pi: ExtensionAPI) {
     const group = activityTimeline.groupForMember(member.id);
     if (!group || !mode.chatContainer?.addChild) return false;
     const component: Component = {
-      render: (width: number) => renderActivityUpdateProjection(group, member, width),
+      render: (width: number) => renderActivityUpdateProjection(group, member, width, component),
       invalidate() {},
       handleMouse: (event: any) => handleActivityUpdateMouse(group, member, event),
     } as Component;
+    if (severity === "error") runtimeErrorDescriptors.set(component, {
+      source: "runtime:error", title, content,
+    });
+    errorChatContainer = mode.chatContainer;
     activityUpdateComponents.set(member.id, component);
     mode.chatContainer.addChild(component);
     mode.ui?.requestRender?.();
@@ -1569,6 +1624,7 @@ export default function prettyTui(pi: ExtensionAPI) {
 
     const patchedRenderSessionEntries = function (this: any, entries: any[], options?: any) {
       currentTui = this.ui;
+      errorChatContainer = this.chatContainer;
       fullscreenTui = currentTui?.mode === "fullscreen";
       // buildContextEntries() prepends the latest compaction for model context,
       // while Pi's live compaction UI appends it chronologically. Keep reloads
@@ -1674,6 +1730,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     // calling sites, rather than depend on private chat-container children or
     // instanceof checks (these can be wrapped or come from another module).
     const patchedAddMessageToChat = function (this: any, message: any, ...args: any[]) {
+      errorChatContainer = this.chatContainer;
       if (message?.role === "assistant") cacheMessageContexts.set(this, message);
       else cacheMessageContexts.delete(this);
       return originalAddMessageToChat.call(this, message, ...args);
@@ -1874,6 +1931,7 @@ export default function prettyTui(pi: ExtensionAPI) {
 
     pi.on("session_shutdown", () => {
       fullscreenTui = false;
+      errorChatContainer = undefined;
       currentTui = undefined;
       clearLatestActivityStatus();
       currentExtensionUi = undefined;
