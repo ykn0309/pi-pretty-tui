@@ -32,6 +32,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import {
   type Component,
+  Editor,
   Markdown,
   stripTerminalSequences,
   truncateToWidth,
@@ -41,6 +42,7 @@ import {
   wrapTextWithAnsi,
   getOsc8LinkAtColumn,
 } from "@earendil-works/pi-tui";
+import { patchPasteUntruncated } from "./paste-untruncated.js";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -764,6 +766,24 @@ export default function prettyTui(pi: ExtensionAPI) {
   // render patches or override built-in tools until the next enabled reload.
   if (!activeForSession) return;
   pi.on("session_shutdown", stopWorkingElapsedTimer);
+
+  // Keep large pastes fully editable. Pi collapses anything over 10 lines or
+  // 1000 characters into an atomic `[paste #1 …]` marker, which cannot be
+  // edited into: the text is stored and only expanded on submit. There is no
+  // setting for that threshold, so substitute the stored text at insertion time
+  // and let Pi's own paste handling decide what the content is.
+  const editorPastePrototype = Editor.prototype as any;
+  const pasteInlinePatchKey = Symbol.for("pretty-tui.paste-inline");
+  if (!editorPastePrototype[pasteInlinePatchKey]) {
+    const restorePasteInline = patchPasteUntruncated(editorPastePrototype);
+    editorPastePrototype[pasteInlinePatchKey] = { restorePasteInline };
+    pi.on("session_shutdown", () => {
+      const patch = editorPastePrototype[pasteInlinePatchKey];
+      if (!patch) return;
+      patch.restorePasteInline();
+      delete editorPastePrototype[pasteInlinePatchKey];
+    });
+  }
 
   // Give Pi's main prompt editor a complete rounded frame. Render the native
   // editor at a two-column narrower width so cursor layout, wrapping, IME, and

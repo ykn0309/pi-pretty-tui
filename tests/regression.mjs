@@ -14,7 +14,7 @@ import {
   initTheme,
   getMarkdownTheme,
 } from "@earendil-works/pi-coding-agent";
-import { Markdown, Text, TuiAltScreen, stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
+import { Editor, Markdown, Text, TuiAltScreen, stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import {
   ActivityTimeline,
   assistantTerminalState,
@@ -76,6 +76,10 @@ const protoPatchKeys = [
 
 const symbolPatchKeys = [
   ["TuiAltScreen", TuiAltScreen.prototype, Symbol.for("pretty-tui.clean-summary-click")],
+  // Also proves this suite sees the same Editor class the extension patched; if
+  // their module graphs diverged the paste assertions below would silently pass
+  // on unpatched behaviour.
+  ["Editor", Editor.prototype, Symbol.for("pretty-tui.paste-inline")],
 ].map(([label, owner, symbol]) => ({ label, owner, symbol }));
 
 const jiti = createJiti(import.meta.url);
@@ -2545,6 +2549,50 @@ for (const name of ["find", "grep"]) {
   const beforeRegular = copies.length;
   assert.equal(click(rows()[0].indexOf("╭"), 0), undefined);
   assert.equal(copies.length, beforeRegular);
+}
+
+// A large paste must stay in the composer as real, editable text. Pi collapses
+// anything over 10 lines or 1000 characters into an atomic `[paste #N ...]`
+// marker, which cannot be edited into: the text is stored and only expanded on
+// submit. The threshold is a literal inside Editor#handlePaste with no setting.
+{
+  const tui = { requestRender() {}, terminal: { rows: 24, columns: 80 } };
+  const mkEditor = () => {
+    const editor = new Editor(tui, theme, {});
+    editor.borderColor = (text) => text;
+    return editor;
+  };
+  const lines20 = Array.from({ length: 20 }, (_, i) => `line ${i + 1}`).join("\n");
+
+  for (const [label, payload] of [
+    ["20 lines", lines20],
+    ["11 lines", Array.from({ length: 11 }, (_, i) => `l${i}`).join("\n")],
+    ["1500 chars", "x".repeat(1500)],
+  ]) {
+    const editor = mkEditor();
+    editor.handlePaste(payload);
+    assert.equal(editor.getText(), payload, `${label} must stay editable`);
+    assert.ok(!/\[paste #\d+/u.test(editor.getText()), `${label} must not leave a marker`);
+  }
+
+  // Under the threshold nothing changes.
+  const small = mkEditor();
+  const nine = Array.from({ length: 9 }, (_, i) => `l${i}`).join("\n");
+  small.handlePaste(nine);
+  assert.equal(small.getText(), nine, "a 9-line paste stays inline");
+
+  // Pasted text is inserted at the cursor like any other text, so the cursor
+  // ends after it rather than after a marker.
+  const cursor = mkEditor();
+  cursor.handlePaste(lines20);
+  assert.deepEqual(cursor.getCursor(), { line: 19, col: 7 });
+
+  // And it is genuinely editable, not just displayed: backspace removes its
+  // last character instead of deleting the whole unit.
+  const editable = mkEditor();
+  editable.handlePaste(lines20);
+  editable.handleBackspace();
+  assert.equal(editable.getText(), lines20.slice(0, -1), "backspace must edit into the paste");
 }
 
 // Fullscreen Markdown shows per-block Copy controls with precise hit regions;
