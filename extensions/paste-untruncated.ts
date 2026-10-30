@@ -22,13 +22,29 @@
 const PASTE_MARKER = /^\[paste #(\d+)(?:\s[^\]]*)?\]$/u;
 
 /**
- * Redirect marker insertion to the stored paste text on `Editor.prototype`.
+ * Collapse a large paste into an atomic `[paste #N ...]` marker.
+ *
+ * Off by default: pasted text stays inline and editable. When on, Pi's native
+ * behaviour applies — anything over 10 lines or 1000 characters becomes a
+ * single marker that expands again on submit.
+ */
+export type PasteShortenGate = () => boolean;
+
+/**
+ * Redirect marker insertion to the stored paste text on `Editor.prototype`,
+ * unless `shouldShorten()` reports that native collapsing is wanted.
  * Returns a restore function; calling it is safe whether or not the patch is
  * still installed.
  */
-export const patchPasteUntruncated = (editorPrototype: any): (() => void) => {
+export const patchPasteUntruncated = (
+  editorPrototype: any,
+  shouldShorten: PasteShortenGate = () => false,
+): (() => void) => {
   const originalHandlePaste = editorPrototype.handlePaste;
   const patchedHandlePaste = function (this: any, text: string) {
+    // Shortening is a setting, so consult it per call rather than at install
+    // time: toggling then takes effect without reloading the extension.
+    if (shouldShorten()) return originalHandlePaste.call(this, text);
     const ownInsert = Object.getOwnPropertyDescriptor(this, "insertTextAtCursorInternal");
     const originalInsert = this.insertTextAtCursorInternal;
     this.insertTextAtCursorInternal = function (this: any, value: string, ...rest: any[]) {

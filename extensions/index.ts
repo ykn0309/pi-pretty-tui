@@ -64,6 +64,11 @@ const RESPONSE_FOOTER_ENTRY_TYPE = "pretty-tui-response-footer";
 type PrettyTuiConfig = {
   enabled?: boolean;
   mode?: PrettyTuiMode;
+  /**
+   * Collapse large pastes into an atomic `[paste #N ...]` marker (Pi's native
+   * behaviour). Off by default so pasted text stays inline and editable.
+   */
+  pasteShorten?: boolean;
   /** Legacy location used by the first mode implementation. */
   bash?: {
     mode?: "full" | "compact";
@@ -775,7 +780,7 @@ export default function prettyTui(pi: ExtensionAPI) {
   const editorPastePrototype = Editor.prototype as any;
   const pasteInlinePatchKey = Symbol.for("pretty-tui.paste-inline");
   if (!editorPastePrototype[pasteInlinePatchKey]) {
-    const restorePasteInline = patchPasteUntruncated(editorPastePrototype);
+    const restorePasteInline = patchPasteUntruncated(editorPastePrototype, () => config.pasteShorten === true);
     editorPastePrototype[pasteInlinePatchKey] = { restorePasteInline };
     pi.on("session_shutdown", () => {
       const patch = editorPastePrototype[pasteInlinePatchKey];
@@ -784,6 +789,43 @@ export default function prettyTui(pi: ExtensionAPI) {
       delete editorPastePrototype[pasteInlinePatchKey];
     });
   }
+
+  // Toggling is a config write, so the gate above picks it up on the next paste
+  // without reloading the extension. An explicit on/off argument makes the
+  // command scriptable; no argument flips the current value.
+  pi.registerCommand("paste-shorten-toggle", {
+    description: "Toggle collapsing large pastes into a [paste #N] marker",
+    getArgumentCompletions: (prefix: string) => {
+      const items = [
+        { value: "on", label: "on", description: "Collapse large pastes into [paste #N]" },
+        { value: "off", label: "off", description: "Keep pasted text inline and editable" },
+      ];
+      const filtered = items.filter((item) => item.value.startsWith(prefix.trim().toLowerCase()));
+      return filtered.length > 0 ? filtered : null;
+    },
+    handler: async (args, ctx) => {
+      const requested = args.trim().toLowerCase();
+      const next = requested === "on" || requested === "true"
+        ? true
+        : requested === "off" || requested === "false"
+          ? false
+          : config.pasteShorten !== true;
+      try {
+        saveConfig({ ...config, pasteShorten: next });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        ctx.ui.notify(`Could not save pi-pretty-tui setting: ${message}`, "error");
+        return;
+      }
+      ctx.ui.notify(
+        next
+          ? "Paste shortening on: a large paste becomes [paste #N] and expands on submit."
+          : "Paste shortening off: a large paste stays inline and editable.",
+        "info",
+      );
+      currentTui?.requestRender?.();
+    },
+  });
 
   // Give Pi's main prompt editor a complete rounded frame. Render the native
   // editor at a two-column narrower width so cursor layout, wrapping, IME, and

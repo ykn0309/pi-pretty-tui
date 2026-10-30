@@ -2595,6 +2595,55 @@ for (const name of ["find", "grep"]) {
   assert.equal(editable.getText(), lines20.slice(0, -1), "backspace must edit into the paste");
 }
 
+// Paste shortening is a setting, off by default, flipped by a slash command.
+// Off means the pasted text stays inline and editable; on restores Pi's native
+// atomic [paste #N ...] marker.
+{
+  const tui = { requestRender() {}, terminal: { rows: 24, columns: 80 } };
+  const mkEditor = () => {
+    const editor = new Editor(tui, theme, {});
+    editor.borderColor = (text) => text;
+    return editor;
+  };
+  const lines20 = Array.from({ length: 20 }, (_, i) => `line ${i + 1}`).join("\n");
+  const configPath = join(agentDir, "pretty-tui.json");
+  const readConfig = () => {
+    try { return JSON.parse(readFileSync(configPath, "utf8")); } catch { return {}; }
+  };
+  const toggle = commands.get("paste-shorten-toggle");
+  assert.ok(toggle, "the toggle command must be registered");
+  const notices = [];
+  const ctx = { hasUI: true, ui: { notify(message) { notices.push(message); } } };
+
+  // Unset means off, so the paste stays inline and editable.
+  assert.equal(readConfig().pasteShorten, undefined, "shortening is unset by default");
+  const byDefault = mkEditor();
+  byDefault.handlePaste(lines20);
+  assert.equal(byDefault.getText(), lines20, "default keeps the paste inline");
+
+  // Turning it on takes effect on the next paste, without reloading anything.
+  await toggle.handler("on", ctx);
+  assert.equal(readConfig().pasteShorten, true, "the command persists the setting");
+  const shortened = mkEditor();
+  shortened.handlePaste(lines20);
+  assert.match(shortened.getText(), /^\[paste #\d+ \+20 lines\]$/u, "shortening on collapses the paste");
+  assert.equal(shortened.getExpandedText(), lines20, "the collapsed text still submits in full");
+
+  // Turning it off restores inline editing.
+  await toggle.handler("off", ctx);
+  assert.equal(readConfig().pasteShorten, false, "the command can turn it off again");
+  const inlineAgain = mkEditor();
+  inlineAgain.handlePaste(lines20);
+  assert.equal(inlineAgain.getText(), lines20, "turning it off restores inline editing");
+
+  // A bare call flips the current value rather than pinning one.
+  await toggle.handler("", ctx);
+  assert.equal(readConfig().pasteShorten, true, "bare toggle flips on");
+  await toggle.handler("", ctx);
+  assert.equal(readConfig().pasteShorten, false, "bare toggle flips off");
+  assert.ok(notices.length >= 4, "each toggle reports its new state");
+}
+
 // Fullscreen Markdown shows per-block Copy controls with precise hit regions;
 // regular mode hides them and invalidation drops stale regions.
 {
