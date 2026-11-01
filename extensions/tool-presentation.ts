@@ -29,7 +29,9 @@ const conciseThirdPartyArgs = (args: any): string => {
       const safeValue = String(value)
         .replace(/(https?:\/\/)[^\s/@:]+:[^\s/@]+@/giu, "$1…:…@")
         .replace(/([?&](?:token|secret|password|api[_-]?key)=)[^&\s]+/giu, "$1…");
-      const rendered = truncateToWidth(safeValue, 36, "…");
+      // Argument previews are plain text. The truncator emits SGR resets even
+      // for unstyled input; remove those before applying the shared muted role.
+      const rendered = stripTerminalSequences(truncateToWidth(stripTerminalSequences(safeValue), 36, "…"));
       return `${key}=${rendered}`;
     });
   return entries.join(" · ");
@@ -45,7 +47,7 @@ const thirdPartyResultSummary = (component: any): string => {
   const newline = boundedText.indexOf("\n");
   const boundedFirstLine = boundedText.slice(0, newline < 0 ? boundedText.length : newline);
   const firstLine = stripTerminalSequences(boundedFirstLine).trim();
-  if (firstLine) return truncateToWidth(firstLine, 72, "…");
+  if (firstLine) return stripTerminalSequences(truncateToWidth(firstLine, 72, "…"));
   if (component.result) return component.result.isError ? "Failed" : "Done";
   return component.executionStarted ? "Running…" : "Pending";
 };

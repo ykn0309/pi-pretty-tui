@@ -328,6 +328,29 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
   assert.ok(raw.includes("-unparsed text"));
 }
 
+// Truncating a plain argument must not reset the color of later arguments.
+{
+  const { renderThirdPartyCompact } = await jiti.import(join(process.cwd(), "extensions/tool-presentation.ts"));
+  const spans = [];
+  const muted = "\x1b[38;2;120;130;140m";
+  const summaryTheme = { bold: text => text, fg(role, text) {
+    spans.push([role, text]);
+    return (role === "muted" ? muted : "\x1b[38;2;220;220;220m") + text + "\x1b[39m";
+  } };
+  const args = Object.freeze({ command: "cd /Users/kainan/Documents/code/VibeCoding/" + "very-long-path/".repeat(6),
+    description: "下载官方中文标点恢复 INT8 权重，仅下载测试文件" });
+  const owner = { toolName: "bg_run", toolDefinition: { label: "Background Run" }, args,
+    result: { content: [{ type: "text", text: "Started background task" }] }, isPartial: false };
+  const lines = renderThirdPartyCompact(owner, 200, summaryTheme);
+  const parameters = spans.find(([role, text]) => role === "muted" && text.startsWith("("))?.[1];
+  assert.ok(parameters.includes("… · description="));
+  assert.ok(!parameters.includes("\x1b"), "plain argument truncation must not inject color resets");
+  const descriptionOffset = lines[0].indexOf("description=");
+  const codes = [...lines[0].slice(0, descriptionOffset).matchAll(/\x1b\[[0-9;]*m/g)];
+  assert.equal(codes.at(-1)[0], muted, "description retains the muted parameter color");
+  assert.equal(owner.args, args);
+}
+
 // User messages render as transparent, right-aligned chat bubbles. Short text
 // determines the bubble width; long text wraps at 75% of the terminal width.
 {
