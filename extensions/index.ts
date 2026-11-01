@@ -1,7 +1,7 @@
 import { isNativeImageRow } from "./ansi-style.js";
 import { cardMargin, cardBackground, frameNativeRows, nativeFrameWidth } from "./full-frame.js";
 import { ThoughtPresentation } from "./thought-presentation.js";
-import { isThirdPartyTool, renderToolProjection, toolLabel, type ToolProjection } from "./tool-presentation.js";
+import { isThirdPartyTool, renderToolProjection, THIRD_PARTY_TOOL, toolLabel, type ToolProjection } from "./tool-presentation.js";
 import { NestedTools, NESTED_SNAPSHOT_ENTRY } from "./nested-tools.js";
 import {
   AssistantMessageComponent,
@@ -4333,21 +4333,31 @@ export default function prettyTui(pi: ExtensionAPI) {
     grep: createGrepToolDefinition(cwd), find: createFindToolDefinition(cwd), ls: createLsToolDefinition(cwd),
   };
   const registerStyledTool = (definition: any) => {
-    const native = nativeDefinitions[definition.name];
-    const select = (kind: "renderCall" | "renderResult", args: any[]) => {
-      const context = args.at(-1);
-      const useNative = renderMode === "full" || renderMode === "compact" && context.expanded;
-      const namespace = useNative ? "nativeFull" : "pretty";
-      const state = context.state[namespace] ??= { state: {} };
-      const scoped = { ...context, state: state.state, lastComponent: state[kind] };
-      const renderer = useNative ? native[kind] : definition[kind];
-      const component = renderer?.(...args.slice(0, -1), scoped);
-      state[kind] = component;
-      return component;
-    };
-    pi.registerTool({ ...definition,
-      renderCall: (...args: any[]) => select("renderCall", args),
-      renderResult: (...args: any[]) => select("renderResult", args),
+    pi.registerToolRenderer((name, next) => {
+      const downstream = next();
+      if (name !== definition.name) return downstream;
+      // A same-named extension/SDK tool owns its own rendering and parameters.
+      // In particular, do not apply built-in summaries to an unrelated schema.
+      const source = pi.getAllTools().find((tool) => tool.name === name)?.sourceInfo;
+      if (source && source.path !== `builtin:${name}`) {
+        return downstream ? { ...downstream, [THIRD_PARTY_TOOL]: true } : downstream;
+      }
+      const native = nativeDefinitions[name];
+      const select = (kind: "renderCall" | "renderResult", args: any[]) => {
+        const context = args.at(-1);
+        const useNative = renderMode === "full" || renderMode === "compact" && context.expanded;
+        const namespace = useNative ? "nativeFull" : "pretty";
+        const state = context.state[namespace] ??= { state: {} };
+        const scoped = { ...context, state: state.state, lastComponent: state[kind] };
+        const renderer = useNative ? downstream?.[kind] ?? native[kind] : definition[kind];
+        const component = renderer?.(...args.slice(0, -1), scoped);
+        state[kind] = component;
+        return component;
+      };
+      return { ...downstream, renderShell: "self",
+        renderCall: (...args: any[]) => select("renderCall", args),
+        renderResult: (...args: any[]) => select("renderResult", args),
+      };
     });
   };
 

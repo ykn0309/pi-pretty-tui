@@ -7,7 +7,11 @@ import type { NestedTools } from "./nested-tools.js";
 // Tool content and hit regions are independent of activity grouping. The host
 // decides whether to decorate this projection with a clean activity tree.
 export const SPECIALIZED_TOOL_NAMES = new Set(["read", "bash", "edit", "write", "grep", "find", "ls"]);
+// A third-party renderer can also use renderShell: "self". The shell style is
+// not proof that it is one of our specialized built-in renderers.
+export const THIRD_PARTY_TOOL = Symbol("pretty-tui.third-party-tool");
 export const isThirdPartyTool = (owner: any): boolean =>
+  Boolean(owner.toolDefinition?.[THIRD_PARTY_TOOL]) ||
   !SPECIALIZED_TOOL_NAMES.has(owner.toolName) || owner.toolDefinition?.renderShell !== "self";
 
 export const toolLabel = (toolName: string, label?: string): string => label || toolName;

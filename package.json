@@ -15,7 +15,7 @@
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
-    "test": "npm run typecheck && node tests/regression.mjs"
+    "test": "npm run typecheck && node tests/regression.mjs && node tests/coexistence.mjs"
   },
   "keywords": [
     "pi-package",
