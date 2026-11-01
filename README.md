@@ -112,7 +112,7 @@ The suite covers live and restored activity timelines, retries and terminal stat
 
 ## Compatibility notice
 
-The current development and regression-test baseline is **Pi 1.3.0**. User chat bubbles support its direct Markdown layout, using themed, full-width User panels in full/compact and transparent, content-sized bubbles in clean. Nested execution requires Pi 0.99.0 or later; this is a feature requirement, not a promise that every older Pi release is tested.
+The current development and regression-test baseline is **Pi 1.4.0**. User chat bubbles support its direct Markdown layout, using themed, full-width User panels in full/compact and transparent, content-sized bubbles in clean. Nested execution requires Pi 0.99.0 or later; this is a feature requirement, not a promise that every older Pi release is tested.
 
 Tool rendering uses Pi's documented extension APIs. Active-tool state follows Pi's built-in execution transitions through its exported interactive components. Clean-mode thought details use the activity hierarchy's own disclosure state; full and compact modes retain Pi's built-in Thinking visibility control. Rendering native user messages as adaptive chat bubbles, rounding the native prompt editor, changing unordered-list markers, and enhancing fenced code blocks require reload-safe runtime patches because Pi does not currently expose public renderer hooks for those presentation details. Markdown enhancements are activated only while rendering user and assistant messages in the main transcript; Markdown created by extension overlays keeps Pi's native layout. Markdown parsing, syntax highlighting, and terminal semantic zones remain handled by Pi.
 
