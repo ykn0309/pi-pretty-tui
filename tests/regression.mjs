@@ -82,6 +82,7 @@ const jiti = createJiti(import.meta.url);
 const extension = await jiti.import(join(process.cwd(), "extensions/index.ts"), { default: true });
 const handlers = new Map();
 const tools = new Map();
+const toolResolvers = [];
 const commands = new Map();
 const entryRenderers = new Map();
 const appendedEntries = [];
@@ -95,9 +96,15 @@ const pi = {
   },
   registerCommand(name, command) { commands.set(name, command); },
   registerEntryRenderer(type, renderer) { entryRenderers.set(type, renderer); },
-  registerTool(tool) { tools.set(tool.name, tool); },
+  registerToolRenderer(resolver) { toolResolvers.push(resolver); },
+  getAllTools() { return []; },
 };
 extension(pi);
+for (const name of ["read", "bash", "edit", "write", "grep", "find", "ls"]) {
+  const resolve = (index) => index < toolResolvers.length
+    ? toolResolvers[index](name, () => resolve(index + 1)) : undefined;
+  tools.set(name, resolve(0));
+}
 
 const theme = {
   bold: (text) => text,
@@ -1484,6 +1491,37 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
     ];
     assert.ok(lines.every((line) => visibleWidth(line) <= width));
   }
+}
+
+// A same-named third-party tool may also provide a self-framed renderer.
+// It must still use the third-party activity projection and keep its renderer.
+{
+  await emit("session_start", {}, sessionContext([]));
+  await emit("agent_start");
+  const native = {
+    label: "external bash", renderShell: "self",
+    renderCall: () => new Text("external bash details", 0, 0),
+    renderResult: () => new Text("external bash output", 0, 0),
+  };
+  // A built-in extension can also own a replacement tool; its source label is
+  // "builtin", but its path is not the built-in bash tool's path.
+  pi.getAllTools = () => [{ name: "bash", sourceInfo: { source: "builtin", path: "builtin:external-extension" } }];
+  const resolve = (index) => index < toolResolvers.length
+    ? toolResolvers[index]("bash", () => resolve(index + 1)) : native;
+  const tool = new ToolExecutionComponent(
+    "bash", "self-framed-external", { command: "run" }, undefined,
+    resolve(0), { requestRender() {} }, process.cwd(),
+  );
+  tool.markExecutionStarted();
+  tool.updateResult({ content: [{ type: "text", text: "done" }], isError: false });
+  tool.handleMouse({ type: "click", button: "left", x: 1, y: 1, width: 80, height: tool.render(80).length });
+  const lines = tool.render(80).map(stripTerminalSequences);
+  assert.ok(lines.some((line) => line.includes("● external bash")), lines.join("\n"));
+  assert.ok(!lines.join("\n").includes("external bash details"));
+  const childY = lines.findIndex((line) => line.includes("● external bash"));
+  tool.handleMouse({ type: "click", button: "left", x: 8, y: childY, width: 80, height: lines.length });
+  assert.ok(tool.render(80).map(stripTerminalSequences).join("\n").includes("external bash details"));
+  pi.getAllTools = () => [];
 }
 
 // FFF can override the built-in names grep/find with default-shell renderers.
@@ -4075,6 +4113,7 @@ assert.notEqual(TuiAltScreen.prototype.handleSelectionMouseEvent, patchedSelecti
     registerCommand(name, command) { disabledCommands.set(name, command); },
     registerEntryRenderer() {},
     registerTool(tool) { disabledTools.push(tool.name); },
+    registerToolRenderer() { disabledTools.push("renderer"); },
   });
   assert.deepEqual(disabledHandlers, []);
   assert.deepEqual(disabledTools, []);

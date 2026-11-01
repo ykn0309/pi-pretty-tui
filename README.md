@@ -23,7 +23,7 @@ pi install npm:pi-pretty-tui
 
 Restart Pi or run `/reload` after installation.
 
-Pi may warn that built-in tools are being overridden. This is expected: pi-pretty-tui re-registers Pi's built-in tools and delegates execution to their original implementations, changing only their TUI renderers.
+pi-pretty-tui registers renderers without replacing tool implementations. Extensions that provide tools with built-in names, such as `bash`, keep their own execution and renderers.
 
 ## Working with tool calls
 
@@ -108,7 +108,9 @@ npm install
 npm test
 ```
 
-The suite covers live and restored activity timelines, retries and terminal states, user/steering/compaction/native-renderer boundaries, ten-second UI-status replacement, stale-timer and flash cleanup on reload and shutdown, standalone severity styling, built-in and third-party tools, expandable thinking, parallel completion ownership, orphaned calls, duplicate-summary prevention, durable response timing and answer-only copy controls, adaptive user chat bubbles, complete prototype-patch restoration, and fullscreen code-block copy hit regions. GitHub Actions runs the same checks on every push and pull request.
+The suite covers live and restored activity timelines, retries and terminal states, user/steering/compaction/native-renderer boundaries, ten-second UI-status replacement, stale-timer and flash cleanup on reload and shutdown, standalone severity styling, built-in and third-party tools, expandable thinking, parallel completion ownership, orphaned calls, duplicate-summary prevention, durable response timing and answer-only copy controls, adaptive user chat bubbles, complete prototype-patch restoration, and fullscreen code-block copy hit regions. It also uses Pi's real extension loader to check coexistence with a same-named replacement tool. GitHub Actions runs the same checks on every push and pull request.
+
+To additionally exercise a local checkout of [pi-bash-bg](https://github.com/mapleluvr/pi-bash-bg), set `PI_BASH_BG_EXTENSION` to its `index.ts` before running `npm test`. This optional integration test executes foreground and automatically backgrounded commands and checks their status and logs.
 
 ## Compatibility notice
 

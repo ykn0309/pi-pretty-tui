@@ -23,7 +23,7 @@ pi install npm:pi-pretty-tui
 
 安装后重启 Pi，或运行 `/reload`。
 
-Pi 可能会提示内置工具被覆盖。这是正常现象：pi-pretty-tui 会重新注册 Pi 的内置工具，并将实际执行委托给原始实现，只修改它们的 TUI 渲染方式。
+pi-pretty-tui 只注册渲染器，不替换工具实现。提供 `bash` 等内置同名工具的扩展仍使用自己的执行逻辑和 renderer。
 
 ## 使用工具调用
 
@@ -108,7 +108,9 @@ npm install
 npm test
 ```
 
-测试覆盖实时与历史恢复的活动时间线、自动重试与终止状态、用户/steer/compaction/原生 renderer 边界、十秒 UI 状态替换、reload 与 shutdown 时的旧 timer 与状态清理、独立严重级别样式、内置与第三方工具、可展开思考、并行工具完成归属、孤立 tool call、重复摘要防护、可持久化的工作时长与仅回答复制控件、自适应用户聊天气泡、原型补丁的完整恢复，以及 fullscreen 代码块复制的点击区域。GitHub Actions 会在每次 push 和 pull request 时运行相同检查。
+测试覆盖实时与历史恢复的活动时间线、自动重试与终止状态、用户/steer/compaction/原生 renderer 边界、十秒 UI 状态替换、reload 与 shutdown 时的旧 timer 与状态清理、独立严重级别样式、内置与第三方工具、可展开思考、并行工具完成归属、孤立 tool call、重复摘要防护、可持久化的工作时长与仅回答复制控件、自适应用户聊天气泡、原型补丁的完整恢复，以及 fullscreen 代码块复制的点击区域。测试还使用 Pi 的真实扩展加载器检查同名替换工具的共存。GitHub Actions 会在每次 push 和 pull request 时运行相同检查。
+
+如需额外测试本地 [pi-bash-bg](https://github.com/mapleluvr/pi-bash-bg) 仓库，运行 `npm test` 前将 `PI_BASH_BG_EXTENSION` 指向其 `index.ts`。该可选集成测试会执行前台和自动转后台的命令，并检查状态和日志。
 
 ## 兼容性说明
 
