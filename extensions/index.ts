@@ -1,3 +1,4 @@
+import { installSelectionCopy, selectableRow } from "./selection-ranges.js";
 import { isNativeImageRow } from "./ansi-style.js";
 import { cardMargin, cardBackground, frameNativeRows, nativeFrameWidth } from "./full-frame.js";
 import { ThoughtPresentation } from "./thought-presentation.js";
@@ -764,6 +765,7 @@ export default function prettyTui(pi: ExtensionAPI) {
   // render patches or override built-in tools until the next enabled reload.
   if (!activeForSession) return;
   pi.on("session_shutdown", stopWorkingElapsedTimer);
+  pi.on("session_shutdown", installSelectionCopy());
 
   // Give Pi's main prompt editor a complete rounded frame. Render the native
   // editor at a two-column narrower width so cursor layout, wrapping, IME, and
@@ -812,9 +814,9 @@ export default function prettyTui(pi: ExtensionAPI) {
 
       return lines.map((line, index) => {
         const fitted = fitInnerWidth(line);
-        if (index === 0) return this.borderColor("╭") + fitted + this.borderColor("╮");
-        if (index === bottomBorderIndex) return this.borderColor("╰") + fitted + this.borderColor("╯");
-        if (index < bottomBorderIndex) return this.borderColor("│") + fitted + this.borderColor("│");
+        if (index === 0) return selectableRow(this.borderColor("╭") + fitted + this.borderColor("╮"), width, []);
+        if (index === bottomBorderIndex) return selectableRow(this.borderColor("╰") + fitted + this.borderColor("╯"), width, []);
+        if (index < bottomBorderIndex) return selectableRow(this.borderColor("│") + fitted + this.borderColor("│"), width, [[1, width - 1]]);
         // Autocomplete remains outside the input frame, aligned to its content.
         return " " + fitted + " ";
       });
@@ -980,9 +982,10 @@ export default function prettyTui(pi: ExtensionAPI) {
           const bottom = border("╰" + "─".repeat(Math.max(0, measured.frameWidth - 2)) + "╯");
           const body = measured.body.map((line: string) => {
             const padding = " ".repeat(Math.max(0, measured.contentWidth - visibleWidth(line)));
-            return border("│ ") + line + padding + border(" │");
+            return selectableRow(border("│ ") + line + padding + border(" │"), measured.frameWidth, [[2, 2 + Math.max(1, Math.min(measured.contentWidth, visibleWidth(line)))]]);
           });
-          return [top, ...body, bottom].map((line: string) => left + line + right);
+          return [selectableRow(top, measured.frameWidth, []), ...body, selectableRow(bottom, measured.frameWidth, [])]
+            .map((line: string) => selectableRow(left + line + right, width, [[measured.leftPad, width - measured.rightPad]]));
         },
         handleMouse(event: any) {
           const measured = layout(event.width);
@@ -2274,6 +2277,20 @@ export default function prettyTui(pi: ExtensionAPI) {
       return originalInvalidate.call(this);
     };
 
+    const copyRows = new WeakMap<object, { source: string[]; padding: number; lines: string[] }>();
+    const selectableMarkdown = (owner: any, source: string[]) => {
+      const padding = Math.max(0, Number(owner.paddingX) || 0);
+      if (!padding) return source;
+      const cached = copyRows.get(owner);
+      if (cached?.source === source && cached.padding === padding) return cached.lines;
+      const lines = source.map(line => {
+        const width = visibleWidth(line);
+        return selectableRow(line, width, [[Math.min(padding, width), Math.max(Math.min(padding, width), width - padding)]]);
+      });
+      copyRows.set(owner, { source, padding, lines });
+      return lines;
+    };
+
     const patchedRender = function (this: any, width: number): string[] {
       const scoped = transcriptMarkdownActive();
       mouseClickHitTests.set(this, (event) => fullscreenTui &&
@@ -2293,7 +2310,7 @@ export default function prettyTui(pi: ExtensionAPI) {
       if (needsRender) this[codeBlockCollectionKey] = [];
 
       const lines = originalRender.call(this, width);
-      if (!needsRender) return lines;
+      if (!needsRender) return selectableMarkdown(this, lines);
 
       const regions: Array<{ xStart: number; xEnd: number; y: number; code: string }> = [];
       let searchFrom = 0;
@@ -2321,7 +2338,7 @@ export default function prettyTui(pi: ExtensionAPI) {
       }
       this[codeBlockRegionsKey] = regions;
       delete this[codeBlockCollectionKey];
-      return lines;
+      return selectableMarkdown(this, lines);
     };
 
     const patchedRenderToken = function (
@@ -2479,14 +2496,12 @@ export default function prettyTui(pi: ExtensionAPI) {
         (showCopyButton ? this.theme.codeBlockBorder(` ${copyLabel} `) : "") + frameBorder("╮");
       const framedCodeWidth = Math.max(1, frameWidth - 4);
       const lines = [
-        styledTopRule,
-        ...codeLines.map((line) =>
-          frameBorder("│ ") +
-          line +
-          " ".repeat(Math.max(0, framedCodeWidth - visibleWidth(line))) +
-          frameBorder(" │")
-        ),
-        frameBorder(`╰${"─".repeat(Math.max(0, frameWidth - 2))}╯`),
+        selectableRow(styledTopRule, frameWidth, []),
+        ...codeLines.map((line) => selectableRow(
+          frameBorder("│ ") + line +
+          " ".repeat(Math.max(0, framedCodeWidth - visibleWidth(line))) + frameBorder(" │"),
+          frameWidth, [[2, frameWidth - 2]])),
+        selectableRow(frameBorder(`╰${"─".repeat(Math.max(0, frameWidth - 2))}╯`), frameWidth, []),
       ];
 
       if (showCopyButton && Array.isArray(this[codeBlockCollectionKey])) {
@@ -3182,13 +3197,11 @@ export default function prettyTui(pi: ExtensionAPI) {
           if (lines.length === 0) return lines;
           contentLines = lines[0] === "" ? lines.slice(1) : lines;
         }
-        decoratedContent = contentLines.map((line: string, index: number) =>
-          truncateToWidth(
-            (index === 0 ? childPrefix : continuation) + line,
-            Math.max(1, width),
-            "",
-          )
-        );
+        decoratedContent = contentLines.map((line: string, index: number) => {
+          const prefix = index === 0 ? childPrefix : continuation;
+          const rendered = truncateToWidth(prefix + line, Math.max(1, width), "");
+          return selectableRow(rendered, visibleWidth(rendered), [[visibleWidth(prefix), visibleWidth(rendered)]]);
+        });
         if (cacheable) {
           this[cleanChildRenderCacheKey] = {
             width,

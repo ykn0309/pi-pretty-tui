@@ -3257,7 +3257,7 @@ for (const key of [...protoPatchKeys, ...symbolPatchKeys]) {
     bg: (role, text) => bg(role) + text + "\x1b[49m" };
   const panel = frameNativeRows("Assistant", ["ORIGINAL_ROW\x1b[0m TEXT"], 80, panelTheme, undefined, owner);
   assert.ok(panel.lines.every((line) => line.trimStart().startsWith(bg("toolPendingBg"))));
-  assert.ok(panel.lines.every((line) => line.startsWith(" ") && line.endsWith(" ")), "outer gutters have terminal background, outside the panel fill");
+  assert.ok(panel.lines.every((line) => stripTerminalSequences(line).startsWith(" ") && stripTerminalSequences(line).endsWith(" ")), "outer gutters have terminal background, outside the panel fill");
   assert.ok(panel.lines.every((line) => visibleWidth(line) === 80));
   assert.equal(panel.inset, 3, "mouse offsets include margin and frame padding");
   assert.ok(panel.lines.some((line) => line.includes("\x1b[0m" + bg("toolPendingBg") + " TEXT")), "reset restores panel fill");

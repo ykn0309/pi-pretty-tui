@@ -1,3 +1,4 @@
+import { selectableRow, selectionMetadataActive } from "./selection-ranges.js";
 import { cardSurface } from "./card-surface.js";
 import { isNativeImageRow, stripAnsiBackgrounds } from "./ansi-style.js";
 import { stripTerminalSequences, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
@@ -44,7 +45,7 @@ function renderPanel(
 ): NativeFrame {
   const palette = ["borderMuted", "text", "accent", "success", "error", titleColor, borderColor]
     .map((role) => theme.fg(role, "x")).join("|") + (theme.bold?.("x") ?? "x") +
-    cardSurface(theme, borderColor, background).signature;
+    cardSurface(theme, borderColor, background).signature + selectionMetadataActive();
   const sectionKey = titleColor + borderColor + footer + background + JSON.stringify([...sections]);
   const cached = cacheOwner ? frameCache.get(cacheOwner) : undefined;
   if (cached && cached.title === title && cached.width === width && cached.palette === palette && cached.sections === sectionKey &&
@@ -58,26 +59,26 @@ function renderPanel(
   const border = (s: string) => theme.fg(borderColor, s);
   const plainCaption = truncateToWidth(title, width - 6, "…");
   const caption = theme.fg(titleColor, theme.bold?.(plainCaption) ?? plainCaption);
-  const lines = [border("╭─ ") + caption + border(" " + "─".repeat(Math.max(0, width - visibleWidth(plainCaption) - 5)) + "╮")];
+  const lines = [selectableRow(border("╭─ ") + caption + border(" " + "─".repeat(Math.max(0, width - visibleWidth(plainCaption) - 5)) + "╮"), width, [])];
   source.forEach((row, sourceY) => {
     const section = sections.get(sourceY);
     if (section) {
       const plainLabel = truncateToWidth(section.label, width - 5, "…");
       const label = theme.fg(section.color, plainLabel);
       sourceRows.set(lines.length, sourceY);
-      lines.push(border("├─ ") + label + border(" " + "─".repeat(Math.max(0, width - visibleWidth(plainLabel) - 5)) + "┤"));
+      lines.push(selectableRow(border("├─ ") + label + border(" " + "─".repeat(Math.max(0, width - visibleWidth(plainLabel) - 5)) + "┤"), width, []));
     }
     sourceRows.set(lines.length, sourceY);
     if (isNativeImageRow(row)) lines.push(row);
     else {
       const content = stripAnsiBackgrounds(row);
-      lines.push(border("│ ") + content + " ".repeat(Math.max(0, contentWidth - visibleWidth(content))) + border(" │"));
+      lines.push(selectableRow(border("│ ") + content + " ".repeat(Math.max(0, contentWidth - visibleWidth(content))) + border(" │"), width, [[2, 2 + Math.max(1, Math.min(contentWidth, visibleWidth(content)))]]));
     }
   });
   const footerFits = footer && visibleWidth(footer) + 6 <= width;
-  lines.push(footerFits
+  lines.push(selectableRow(footerFits
     ? border("╰" + "─".repeat(width - visibleWidth(footer) - 5) + " " + footer + " ─╯")
-    : border("╰" + "─".repeat(width - 2) + "╯"));
+    : border("╰" + "─".repeat(width - 2) + "╯"), width, []));
   const frame = { lines: lines.map((line) => cardBackground(line, width, theme, background, borderColor)), sourceRows, contentWidth, inset: 2 };
   if (cacheOwner) frameCache.set(cacheOwner, { title, source: source.slice(), width, palette, sections: sectionKey, frame });
   return frame;
@@ -98,7 +99,7 @@ export function frameNativeRows(
   const cached = gutterFrames.get(frame);
   if (cached) return cached;
   const padded = { ...frame, inset: frame.inset + margin,
-    lines: frame.lines.map((line) => isNativeImageRow(line) ? line : " ".repeat(margin) + line + " ".repeat(margin)),
+    lines: frame.lines.map((line) => isNativeImageRow(line) ? line : selectableRow(" ".repeat(margin) + line + " ".repeat(margin), width, [[margin, width - margin]])),
   };
   gutterFrames.set(frame, padded);
   return padded;
