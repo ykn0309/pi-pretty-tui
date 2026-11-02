@@ -38,14 +38,6 @@ pi install npm:pi-pretty-tui
 
 设置会持久保存。禁用插件后恢复 Pi 原生外观。
 
-## Markdown 可读性
-
-- transcript 列表采用统一间距，支持嵌套与任务列表，不重复添加空行。
-- 助手回答的粗体和斜体采用主题颜色；在 `pretty-tui.json` 设置 `"markdownEmphasis": "native"` 并运行 `/reload` 可保留原生颜色。
-- H2 使用主题标题色与粗体，不再显示带底色的标签；其他标题级别保留现有样式。
-
-保留原始 Markdown、行内代码与链接样式，以及换行行为。详见 [Markdown 可读性说明](./docs/markdown-readability.md)（英文）。
-
 ## 复制操作
 
 以 **fullscreen 全屏模式**启动 Pi，即可使用鼠标复制入口：
@@ -79,10 +71,6 @@ regular 非全屏模式由终端处理选择与复制，开启此选项也不会
 - 保留 Pi 原生输入行为和工具执行逻辑，包括第三方工具实现。
 - 嵌套工具的文本详情会随会话保存以便恢复，内容可能截断；会话文件可能包含工具输出中的敏感信息。
 - 版本变更与贡献者致谢见 [Releases](https://github.com/ykn0309/pi-pretty-tui/releases)。
-
-## 开发
-
-通过本地仓库开发时使用 `pi -e .` 与 `/reload`，详见[开发与测试说明](./docs/development.md)。请勿提交本地 `.pi/settings.json`。
 
 ## 卸载
 
