@@ -84,3 +84,25 @@ Annotations add **465,600 serialized bytes** in the synthetic card workload (abo
 - Regular-mode OS-terminal-owned text selection is outside Pi's application-managed copy path and is unchanged.
 
 No currently failing scenario remains in the automated covered set. That is stronger evidence than the initial prototype, but not a promise that copying is correct in every conceivable environment. Keep this branch isolated until reviewed and manually accepted.
+
+## Garbage-collection lifecycle follow-up
+
+Added `npm run test:selection-gc` with fresh-process native/prototype comparisons (three processes per mode), `--expose-gc`, event-loop turns between collection checks, and WeakRefs. Full machine-readable samples are in `selection-gc-results.json`.
+
+Per-process workloads: 300 held cards, release of all references, 12 create/drop cycles, 3,600 updates of one live card, 720 overlay replacements on one live screen, dropping the screen, and 30 selection-hook install/uninstall cycles. A separate whole-extension test performs 30 full loads/shutdowns with User/Assistant/tool components and the composer.
+
+Median heap deltas for the initial card batch:
+
+| State | Native baseline | Prototype |
+|---|---:|---:|
+| Additional heap while 300 cards are held | 3,038,232 bytes | 5,246,536 bytes |
+| Residual above warmed baseline after releasing references + repeated GC | 37,536 bytes | 37,776 bytes |
+| Observed batch heap reclaimed | 98.76% | 99.28% |
+
+All three prototype processes and native processes ended with **zero surviving tracked dropped card owners/frames, old streaming frames, hidden overlay components, or dropped screens**. While the streaming owner was still alive, its one current frame remained cached as intended; dropping the owner made that frame collectable too.
+
+Whole-extension reload testing tracked 2,760 objects across 30 cycles; final survivors: **zero**. Median retained heap in the first/last five reload cycles differed by 478,592 bytes. The test records that drift rather than treating it as zero. Native/prototype overlay and reload traces also retain bounded cache/runtime warm-up growth, without the tracked discarded objects surviving.
+
+Two early failures were test-harness issues, not established product leaks: the async test's lexical binding kept the final streaming frame strongly reachable (the unmodified baseline failed too); returning only WeakRefs from a synchronous helper removed that interference. Also, a chain of WeakMap entries could require further event-loop turns/major collections. Tests use bounded repeated collections, not arbitrary sleeps or unbounded retries.
+
+This demonstrates collectability and no sustained object accumulation in the exercised workloads. It does not prove zero leaks for every extension combination or days-long usage, nor that the OS immediately lowers RSS after collection. Explicit GC is a test technique; users do not need to force GC during normal use. No production implementation changes were required by these lifecycle tests.

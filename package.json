@@ -20,7 +20,8 @@
     "bench:selection": "node tests/selection-benchmark.mjs",
     "test:selection-cli": "python3 tests/selection-cli.py",
     "bench:selection-frame": "node tests/selection-frame-benchmark.mjs",
-    "bench:selection-memory": "node --expose-gc tests/selection-memory-benchmark.mjs"
+    "bench:selection-memory": "node --expose-gc tests/selection-memory-benchmark.mjs",
+    "test:selection-gc": "node --expose-gc tests/selection-gc.mjs && node --expose-gc tests/selection-reload-gc.mjs"
   },
   "keywords": [
     "pi-package",

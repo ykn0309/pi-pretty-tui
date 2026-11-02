@@ -1,0 +1,762 @@
+{
+  "lifecycle": {
+    "node": "v22.22.1",
+    "results": [
+      {
+        "mode": "native",
+        "runs": [
+          {
+            "active": false,
+            "start": {
+              "heapUsed": 7962528,
+              "rss": 85795408,
+              "external": 2306281,
+              "arrayBuffers": 24987
+            },
+            "held": {
+              "heapUsed": 11000736,
+              "rss": 85877376,
+              "external": 2306321,
+              "arrayBuffers": 24987
+            },
+            "released": {
+              "heapUsed": 8000064,
+              "rss": 85910144,
+              "external": 2306321,
+              "arrayBuffers": 24987
+            },
+            "end": {
+              "heapUsed": 8497728,
+              "rss": 90169984,
+              "external": 2306321,
+              "arrayBuffers": 24987
+            },
+            "releasedCardObjectsAlive": 0,
+            "streamUpdates": 3600,
+            "droppedStreamFramesAlive": 0,
+            "replacedOverlays": 720,
+            "droppedOverlayObjectsAlive": 0,
+            "droppedScreenAlive": false,
+            "cardCycles": 12,
+            "reloads": 30,
+            "heapGrowthBytes": {
+              "cardCycles": 14216,
+              "streaming": 4192,
+              "overlayReplacement": 151160,
+              "reloads": 1744
+            },
+            "heapSamples": {
+              "cardCycles": [
+                8027880,
+                8029528,
+                8029528,
+                8029528,
+                8029712,
+                8029712,
+                8042384,
+                8042560,
+                8043784,
+                8043744,
+                8043744,
+                8043744
+              ],
+              "streaming": [
+                8029512,
+                8070064,
+                8070096,
+                8070128,
+                8092728,
+                8061664,
+                8061696,
+                8097840,
+                8061800,
+                8062080,
+                8109808,
+                8074256
+              ],
+              "overlayReplacement": [
+                8986136,
+                9588792,
+                9687192,
+                9666144,
+                9668336,
+                9671792,
+                9673712,
+                9716232,
+                9725960,
+                9738632,
+                9739952,
+                9742296
+              ],
+              "reloads": [
+                8474256,
+                8474048,
+                8474656,
+                8474016,
+                8474992,
+                8475096,
+                8475736,
+                8475096,
+                8475792,
+                8475152,
+                8475792,
+                8475152,
+                8475792,
+                8475152,
+                8475424,
+                8475424,
+                8475152,
+                8475632,
+                8475360,
+                8475360,
+                8475632,
+                8475360,
+                8475632,
+                8475360,
+                8476000,
+                8475360,
+                8475632,
+                8476000,
+                8475360,
+                8476000
+              ]
+            }
+          },
+          {
+            "active": false,
+            "start": {
+              "heapUsed": 7962648,
+              "rss": 85729776,
+              "external": 2306281,
+              "arrayBuffers": 24987
+            },
+            "held": {
+              "heapUsed": 11000880,
+              "rss": 85877256,
+              "external": 2306321,
+              "arrayBuffers": 24987
+            },
+            "released": {
+              "heapUsed": 8000208,
+              "rss": 85893640,
+              "external": 2306321,
+              "arrayBuffers": 24987
+            },
+            "end": {
+              "heapUsed": 8492824,
+              "rss": 84910624,
+              "external": 2306321,
+              "arrayBuffers": 24987
+            },
+            "releasedCardObjectsAlive": 0,
+            "streamUpdates": 3600,
+            "droppedStreamFramesAlive": 0,
+            "replacedOverlays": 720,
+            "droppedOverlayObjectsAlive": 0,
+            "droppedScreenAlive": false,
+            "cardCycles": 12,
+            "reloads": 30,
+            "heapGrowthBytes": {
+              "cardCycles": 14216,
+              "streaming": 4192,
+              "overlayReplacement": 113552,
+              "reloads": 1344
+            },
+            "heapSamples": {
+              "cardCycles": [
+                8028024,
+                8029672,
+                8029672,
+                8029672,
+                8029856,
+                8029832,
+                8042528,
+                8042704,
+                8043904,
+                8043888,
+                8043888,
+                8043888
+              ],
+              "streaming": [
+                8029656,
+                8070208,
+                8070240,
+                8070272,
+                8097512,
+                8061808,
+                8051192,
+                8097744,
+                8051304,
+                8061984,
+                8099064,
+                8074400
+              ],
+              "overlayReplacement": [
+                8974832,
+                9620760,
+                9681592,
+                9692368,
+                9694016,
+                9697776,
+                9699696,
+                9710592,
+                9720320,
+                9732992,
+                9734312,
+                9736656
+              ],
+              "reloads": [
+                8468248,
+                8468680,
+                8468376,
+                8468648,
+                8469352,
+                8469456,
+                8469456,
+                8469456,
+                8469512,
+                8469512,
+                8469512,
+                8469512,
+                8469512,
+                8469512,
+                8470152,
+                8469512,
+                8469512,
+                8469720,
+                8469720,
+                8469720,
+                8470360,
+                8469720,
+                8470360,
+                8469720,
+                8470360,
+                8469720,
+                8470360,
+                8469720,
+                8470360,
+                8469720
+              ]
+            }
+          },
+          {
+            "active": false,
+            "start": {
+              "heapUsed": 7963032,
+              "rss": 85877232,
+              "external": 2306281,
+              "arrayBuffers": 24987
+            },
+            "held": {
+              "heapUsed": 11001464,
+              "rss": 86303336,
+              "external": 2306321,
+              "arrayBuffers": 24987
+            },
+            "released": {
+              "heapUsed": 8000568,
+              "rss": 86303336,
+              "external": 2306321,
+              "arrayBuffers": 24987
+            },
+            "end": {
+              "heapUsed": 8493272,
+              "rss": 91071080,
+              "external": 2306321,
+              "arrayBuffers": 24987
+            },
+            "releasedCardObjectsAlive": 0,
+            "streamUpdates": 3600,
+            "droppedStreamFramesAlive": 0,
+            "replacedOverlays": 720,
+            "droppedOverlayObjectsAlive": 0,
+            "droppedScreenAlive": false,
+            "cardCycles": 12,
+            "reloads": 30,
+            "heapGrowthBytes": {
+              "cardCycles": 14216,
+              "streaming": 3952,
+              "overlayReplacement": 145176,
+              "reloads": 1344
+            },
+            "heapSamples": {
+              "cardCycles": [
+                8028384,
+                8030032,
+                8030032,
+                8030032,
+                8030216,
+                8030216,
+                8042888,
+                8043064,
+                8044288,
+                8044248,
+                8044224,
+                8044248
+              ],
+              "streaming": [
+                8030016,
+                8070568,
+                8070600,
+                8070632,
+                8086992,
+                8062168,
+                8051312,
+                8098080,
+                8051664,
+                8062584,
+                8099664,
+                8074520
+              ],
+              "overlayReplacement": [
+                8975192,
+                9589568,
+                9687696,
+                9661208,
+                9663128,
+                9666616,
+                9668536,
+                9711056,
+                9720784,
+                9733424,
+                9734744,
+                9737088
+              ],
+              "reloads": [
+                8468680,
+                8468840,
+                8468808,
+                8468808,
+                8469784,
+                8469888,
+                8469888,
+                8469888,
+                8470584,
+                8469944,
+                8469944,
+                8470584,
+                8469944,
+                8469944,
+                8470584,
+                8469944,
+                8470584,
+                8470152,
+                8470792,
+                8470152,
+                8470792,
+                8470152,
+                8470792,
+                8470152,
+                8470792,
+                8470152,
+                8470792,
+                8470152,
+                8470792,
+                8470152
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "mode": "prototype",
+        "runs": [
+          {
+            "active": true,
+            "start": {
+              "heapUsed": 7979744,
+              "rss": 88237248,
+              "external": 2306281,
+              "arrayBuffers": 24987
+            },
+            "held": {
+              "heapUsed": 13226624,
+              "rss": 88630584,
+              "external": 2306321,
+              "arrayBuffers": 24987
+            },
+            "released": {
+              "heapUsed": 8017736,
+              "rss": 88630584,
+              "external": 2306321,
+              "arrayBuffers": 24987
+            },
+            "end": {
+              "heapUsed": 8589064,
+              "rss": 87057744,
+              "external": 2306321,
+              "arrayBuffers": 24987
+            },
+            "releasedCardObjectsAlive": 0,
+            "streamUpdates": 3600,
+            "droppedStreamFramesAlive": 0,
+            "replacedOverlays": 720,
+            "droppedOverlayObjectsAlive": 0,
+            "droppedScreenAlive": false,
+            "cardCycles": 12,
+            "reloads": 30,
+            "heapGrowthBytes": {
+              "cardCycles": 18520,
+              "streaming": 2616,
+              "overlayReplacement": 157600,
+              "reloads": 10536
+            },
+            "heapSamples": {
+              "cardCycles": [
+                8045480,
+                8047056,
+                8047056,
+                8047056,
+                8047480,
+                8047480,
+                8064384,
+                8064560,
+                8065616,
+                8065552,
+                8065576,
+                8065576
+              ],
+              "streaming": [
+                8071896,
+                8106432,
+                8106464,
+                8106768,
+                8131024,
+                8093920,
+                8093168,
+                8126392,
+                8093472,
+                8094352,
+                8141760,
+                8109048
+              ],
+              "overlayReplacement": [
+                9070104,
+                9707512,
+                9808928,
+                9819848,
+                9821496,
+                9825256,
+                9827176,
+                9842792,
+                9851056,
+                9860944,
+                9865112,
+                9867464
+              ],
+              "reloads": [
+                8548592,
+                8556080,
+                8563488,
+                8564464,
+                8565344,
+                8565448,
+                8566088,
+                8565640,
+                8566408,
+                8565768,
+                8566408,
+                8565768,
+                8566408,
+                8565768,
+                8566408,
+                8565768,
+                8566408,
+                8565976,
+                8566616,
+                8565976,
+                8566616,
+                8565976,
+                8566616,
+                8565976,
+                8566616,
+                8566616,
+                8565976,
+                8566616,
+                8566616,
+                8565976
+              ]
+            }
+          },
+          {
+            "active": true,
+            "start": {
+              "heapUsed": 7980272,
+              "rss": 87876416,
+              "external": 2306281,
+              "arrayBuffers": 24987
+            },
+            "held": {
+              "heapUsed": 13226808,
+              "rss": 87991152,
+              "external": 2306321,
+              "arrayBuffers": 24987
+            },
+            "released": {
+              "heapUsed": 8018048,
+              "rss": 87991152,
+              "external": 2306321,
+              "arrayBuffers": 24987
+            },
+            "end": {
+              "heapUsed": 8588464,
+              "rss": 90203040,
+              "external": 2306321,
+              "arrayBuffers": 24987
+            },
+            "releasedCardObjectsAlive": 0,
+            "streamUpdates": 3600,
+            "droppedStreamFramesAlive": 0,
+            "replacedOverlays": 720,
+            "droppedOverlayObjectsAlive": 0,
+            "droppedScreenAlive": false,
+            "cardCycles": 12,
+            "reloads": 30,
+            "heapGrowthBytes": {
+              "cardCycles": 18304,
+              "streaming": -8272,
+              "overlayReplacement": 157872,
+              "reloads": 10168
+            },
+            "heapSamples": {
+              "cardCycles": [
+                8045792,
+                8047368,
+                8047344,
+                8047368,
+                8047552,
+                8047552,
+                8064456,
+                8064632,
+                8065688,
+                8065648,
+                8065648,
+                8065624
+              ],
+              "streaming": [
+                8071968,
+                8106504,
+                8106536,
+                8106600,
+                8131336,
+                8093720,
+                8093208,
+                8130904,
+                8093784,
+                8094424,
+                8141832,
+                8098232
+              ],
+              "overlayReplacement": [
+                9070176,
+                9707584,
+                9809000,
+                9819920,
+                9821840,
+                9825056,
+                9827248,
+                9842864,
+                9851128,
+                9861288,
+                9865456,
+                9867264
+              ],
+              "reloads": [
+                8549032,
+                8555880,
+                8563928,
+                8564904,
+                8564776,
+                8566160,
+                8566160,
+                8565712,
+                8565840,
+                8565840,
+                8565840,
+                8565840,
+                8565840,
+                8565840,
+                8565840,
+                8565840,
+                8565840,
+                8566048,
+                8566048,
+                8566048,
+                8566048,
+                8566048,
+                8566048,
+                8566048,
+                8566048,
+                8566048,
+                8566048,
+                8566048,
+                8566048,
+                8566688
+              ]
+            }
+          },
+          {
+            "active": true,
+            "start": {
+              "heapUsed": 7980128,
+              "rss": 88679400,
+              "external": 2306281,
+              "arrayBuffers": 24987
+            },
+            "held": {
+              "heapUsed": 13226576,
+              "rss": 89187448,
+              "external": 2306321,
+              "arrayBuffers": 24987
+            },
+            "released": {
+              "heapUsed": 8017880,
+              "rss": 89187448,
+              "external": 2306321,
+              "arrayBuffers": 24987
+            },
+            "end": {
+              "heapUsed": 8589200,
+              "rss": 80913528,
+              "external": 2306321,
+              "arrayBuffers": 24987
+            },
+            "releasedCardObjectsAlive": 0,
+            "streamUpdates": 3600,
+            "droppedStreamFramesAlive": 0,
+            "replacedOverlays": 720,
+            "droppedOverlayObjectsAlive": 0,
+            "droppedScreenAlive": false,
+            "cardCycles": 12,
+            "reloads": 30,
+            "heapGrowthBytes": {
+              "cardCycles": 18520,
+              "streaming": 2584,
+              "overlayReplacement": 157872,
+              "reloads": 10168
+            },
+            "heapSamples": {
+              "cardCycles": [
+                8045600,
+                8047200,
+                8047200,
+                8047200,
+                8047624,
+                8047624,
+                8064504,
+                8064680,
+                8065760,
+                8065720,
+                8065720,
+                8065720
+              ],
+              "streaming": [
+                8072040,
+                8106576,
+                8106608,
+                8106912,
+                8120520,
+                8093968,
+                8082392,
+                8130944,
+                8093648,
+                8094288,
+                8142136,
+                8109160
+              ],
+              "overlayReplacement": [
+                9070240,
+                9707648,
+                9809064,
+                9819984,
+                9821904,
+                9825120,
+                9827344,
+                9842960,
+                9851192,
+                9861352,
+                9865520,
+                9867600
+              ],
+              "reloads": [
+                8548728,
+                8555944,
+                8563624,
+                8564328,
+                8564840,
+                8565584,
+                8565856,
+                8565776,
+                8565904,
+                8565904,
+                8566176,
+                8565904,
+                8565904,
+                8566176,
+                8565904,
+                8565904,
+                8566544,
+                8566112,
+                8566752,
+                8566112,
+                8566752,
+                8566112,
+                8566752,
+                8566112,
+                8566752,
+                8566112,
+                8566752,
+                8566112,
+                8566752,
+                8566112
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "note": "Forced-GC reachability and bounded-growth checks, not proof for every extension or a days-long session. RSS is reported but not used as a leak assertion."
+  },
+  "wholeExtensionReload": {
+    "cycles": 30,
+    "weaklyObservedObjects": 2760,
+    "survivors": 0,
+    "baselineHeap": 36284136,
+    "endHeap": 36920696,
+    "firstFiveMedian": 36416928,
+    "lastFiveMedian": 36895520,
+    "growthBytes": 478592,
+    "samples": [
+      36353904,
+      36394152,
+      36416928,
+      36457736,
+      36516272,
+      36689896,
+      36704480,
+      36719704,
+      36729744,
+      36743256,
+      36777864,
+      36780008,
+      36766280,
+      36773840,
+      36774728,
+      36812640,
+      36821952,
+      36826904,
+      36834304,
+      36813672,
+      36836840,
+      36839736,
+      36882328,
+      36887248,
+      36888680,
+      36899496,
+      36886120,
+      36887640,
+      36895520,
+      36913912
+    ]
+  }
+}
