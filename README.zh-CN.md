@@ -4,6 +4,8 @@
 
 为 [Pi coding agent](https://pi.dev/) 提供更清爽的界面：可折叠的工具与思考、跟随主题的圆角卡片，以及便捷的复制操作。
 
+![pi-pretty-tui clean 模式：可展开的工具活动与复制入口](./assets/screenshot.png)
+
 ## 安装
 
 ```sh

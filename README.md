@@ -4,6 +4,8 @@ English | [简体中文](./README.zh-CN.md)
 
 A cleaner, theme-aware interface for the [Pi coding agent](https://pi.dev/), with collapsible tools and thoughts, rounded message cards, and convenient copying.
 
+![pi-pretty-tui clean mode with expandable tool activity and copy controls](./assets/screenshot.png)
+
 ## Install
 
 ```sh
