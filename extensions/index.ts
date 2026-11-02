@@ -679,8 +679,8 @@ export default function prettyTui(pi: ExtensionAPI) {
         { value: "full", label: "full", description: "Full tool details and output" },
         { value: "compact", label: "compact", description: "Concise summaries for all built-in tools" },
         { value: "clean", label: "clean", description: "Group supported tools into Running/Done status" },
-        { value: "selection-copy on", label: "selection-copy on", description: "Enable border-free selection copying and reload" },
-        { value: "selection-copy off", label: "selection-copy off", description: "Use native selection copying and reload" },
+        { value: "selection-copy on", label: "selection-copy on", description: "Copy selected text without UI borders in fullscreen mode; enable and reload" },
+        { value: "selection-copy off", label: "selection-copy off", description: "Restore native selection copying and reload" },
         { value: "status", label: "status", description: "Show the current settings" },
       ];
       const filtered = items.filter((item) => item.value.startsWith(prefix.trim().toLowerCase()));
@@ -701,7 +701,7 @@ export default function prettyTui(pi: ExtensionAPI) {
         const full = `Full — full tool details and output${renderMode === "full" ? " (current)" : ""}`;
         const compact = `Compact — concise tool summaries and nested calls${renderMode === "compact" ? " (current)" : ""}`;
         const clean = `Clean — group supported tools into Running/Done status${renderMode === "clean" ? " (current)" : ""}`;
-        const selectionCopy = `Selection copy — ${config.selectionCopy === true ? "on" : "off"} (experimental)`;
+        const selectionCopy = `Selection copy — ${config.selectionCopy === true ? "on" : "off"} · copy text without UI borders (fullscreen, experimental)`;
         const selected = await ctx.ui.select("pi-pretty-tui settings", [enabled, full, compact, clean, selectionCopy]);
         if (!selected) return;
         requested = selected === selectionCopy
