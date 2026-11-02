@@ -143,6 +143,10 @@ pi remove npm:pi-pretty-tui
 
 Then restart Pi.
 
+## Acknowledgments
+
+Thanks to [@bitnom](https://github.com/bitnom) for reporting and investigating the [selection-copy issue](https://github.com/ykn0309/pi-pretty-tui/issues/2), sharing the proposed fix and layout/resize findings in [#5](https://github.com/ykn0309/pi-pretty-tui/pull/5), and contributing analysis of tool-renderer coexistence in [#4](https://github.com/ykn0309/pi-pretty-tui/pull/4). These reports, experiments and suggestions informed our fixes, even though we adopted different implementations. We also appreciate the editor-selection work and detailed testing shared in [#7](https://github.com/ykn0309/pi-pretty-tui/pull/7).
+
 ## License
 
 MIT

@@ -143,6 +143,10 @@ pi remove npm:pi-pretty-tui
 
 然后重启 Pi。
 
+## 致谢
+
+感谢 [@bitnom](https://github.com/bitnom) 报告并调查[选区复制问题](https://github.com/ykn0309/pi-pretty-tui/issues/2)，在 [#5](https://github.com/ykn0309/pi-pretty-tui/pull/5) 中分享修复提案及布局、窗口缩放方面的调查结果，以及在 [#4](https://github.com/ykn0309/pi-pretty-tui/pull/4) 中补充工具渲染器共存问题的分析。虽然项目最终采用了不同实现，这些报告、实验和建议仍为我们的修复提供了帮助。同时感谢他在 [#7](https://github.com/ykn0309/pi-pretty-tui/pull/7) 中分享的编辑器选区功能和详细测试工作。
+
 ## 许可证
 
 MIT
