@@ -106,3 +106,9 @@ Whole-extension reload testing tracked 2,760 objects across 30 cycles; final sur
 Two early failures were test-harness issues, not established product leaks: the async test's lexical binding kept the final streaming frame strongly reachable (the unmodified baseline failed too); returning only WeakRefs from a synchronous helper removed that interference. Also, a chain of WeakMap entries could require further event-loop turns/major collections. Tests use bounded repeated collections, not arbitrary sleeps or unbounded retries.
 
 This demonstrates collectability and no sustained object accumulation in the exercised workloads. It does not prove zero leaks for every extension combination or days-long usage, nor that the OS immediately lowers RSS after collection. Explicit GC is a test technique; users do not need to force GC during normal use. No production implementation changes were required by these lifecycle tests.
+
+## Optional activation
+
+The prototype is now opt-in via `selectionCopy: true` in `pretty-tui.json`. Default and malformed/non-boolean values leave the feature off. The `/pretty-tui` settings menu exposes `Selection copy`; `/pretty-tui selection-copy on|off` saves the preference and invokes Pi's standard reload. `/pretty-tui status` includes its configured value.
+
+Off installs none of the selection/compositor/terminal-write hooks and emits no row annotations. Disabling the entire extension also prevents activation. Tests explicitly enable the option when exercising selection behavior; normal regressions run with the default off. Dedicated option tests cover menu/commands, persistence, restoration, reload failures, repeated toggles and malformed configuration.

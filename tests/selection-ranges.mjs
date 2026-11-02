@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import {createJiti} from 'jiti';
-import {mkdtempSync,rmSync} from 'node:fs';
+import {mkdtempSync,rmSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';import {join} from 'node:path';
 import {UserMessageComponent,AssistantMessageComponent,CustomEditor,initTheme} from '@earendil-works/pi-coding-agent';
 import {TuiAltScreen,ScrollView,VStack,HStack,Container,ProcessTerminal,stripTerminalSequences,visibleWidth} from '@earendil-works/pi-tui';
 import {renderLayoutFrame} from '@earendil-works/pi-tui/dist/layout.js';
-const dir=mkdtempSync(join(tmpdir(),'pretty-selection-'));process.env.PI_CODING_AGENT_DIR=dir;initTheme('dark',false);
+const dir=mkdtempSync(join(tmpdir(),'pretty-selection-'));process.env.PI_CODING_AGENT_DIR=dir;writeFileSync(join(dir,'pretty-tui.json'),JSON.stringify({selectionCopy:true}));initTheme('dark',false);
 const originalCopy=TuiAltScreen.prototype.getActiveSelectionText, originalWrite=ProcessTerminal.prototype.write;
 const originalOverlays=TuiAltScreen.prototype.compositeOverlays,originalFlashes=TuiAltScreen.prototype.compositeFlashes;
 const events=new Map(),commands=new Map();const jiti=createJiti(import.meta.url);

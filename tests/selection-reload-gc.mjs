@@ -7,7 +7,7 @@ import {initTheme,UserMessageComponent,AssistantMessageComponent,ToolExecutionCo
 import {TuiAltScreen,ProcessTerminal} from '@earendil-works/pi-tui';
 assert.ok(global.gc,'Run with --expose-gc');
 const dir=mkdtempSync(join(tmpdir(),'selection-reload-gc-'));process.env.PI_CODING_AGENT_DIR=dir;
-writeFileSync(join(dir,'pretty-tui.json'),JSON.stringify({mode:'full'}));initTheme('dark',false);
+writeFileSync(join(dir,'pretty-tui.json'),JSON.stringify({mode:'full',selectionCopy:true}));initTheme('dark',false);
 const extension=await createJiti(import.meta.url).import(join(process.cwd(),'extensions/index.ts'),{default:true});
 const originalCopy=TuiAltScreen.prototype.getActiveSelectionText,originalWrite=ProcessTerminal.prototype.write;
 const gc=async()=>{for(let i=0;i<3;i++){await turn();global.gc()}await turn()};

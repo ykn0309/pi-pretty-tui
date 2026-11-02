@@ -4,7 +4,7 @@ import {writeFileSync,mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';import {join} from 'node:path';
 import {initTheme,UserMessageComponent,CustomEditor} from '@earendil-works/pi-coding-agent';
 import {ProcessTerminal,TuiAltScreen,VStack,ScrollView,Container,stripTerminalSequences} from '@earendil-works/pi-tui';
-const dir=mkdtempSync(join(tmpdir(),'selection-native-pty-'));process.env.PI_CODING_AGENT_DIR=dir;initTheme('dark',false);
+const dir=mkdtempSync(join(tmpdir(),'selection-native-pty-'));process.env.PI_CODING_AGENT_DIR=dir;writeFileSync(join(dir,'pretty-tui.json'),JSON.stringify({selectionCopy:true}));initTheme('dark',false);
 const events=new Map();
 (await createJiti(import.meta.url).import(join(process.cwd(),'extensions/index.ts'),{default:true}))({
  on(n,f){const a=events.get(n)??[];a.push(f);events.set(n,a)},registerToolRenderer(){},getAllTools(){return []},registerCommand(){},registerEntryRenderer(){},appendEntry(){}});

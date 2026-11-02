@@ -15,7 +15,7 @@
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
-    "test": "npm run typecheck && node tests/regression.mjs && node tests/coexistence.mjs && node tests/selection-ranges.mjs",
+    "test": "npm run typecheck && node tests/regression.mjs && node tests/coexistence.mjs && node tests/selection-ranges.mjs && node tests/selection-options.mjs",
     "test:selection-pty": "python3 tests/selection-pty.py",
     "bench:selection": "node tests/selection-benchmark.mjs",
     "test:selection-cli": "python3 tests/selection-cli.py",

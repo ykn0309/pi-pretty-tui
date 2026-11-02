@@ -1,4 +1,4 @@
-import { installSelectionCopy, selectableRow } from "./selection-ranges.js";
+import { installSelectionCopy, selectableRow, selectionMetadataActive } from "./selection-ranges.js";
 import { isNativeImageRow } from "./ansi-style.js";
 import { cardMargin, cardBackground, frameNativeRows, nativeFrameWidth } from "./full-frame.js";
 import { ThoughtPresentation } from "./thought-presentation.js";
@@ -63,6 +63,8 @@ const RESPONSE_FOOTER_ENTRY_TYPE = "pretty-tui-response-footer";
 type PrettyTuiConfig = {
   enabled?: boolean;
   mode?: PrettyTuiMode;
+  /** Exclude plugin decoration from fullscreen selections. Opt-in. */
+  selectionCopy?: boolean;
   /** Legacy location used by the first mode implementation. */
   bash?: {
     mode?: "full" | "compact";
@@ -677,7 +679,9 @@ export default function prettyTui(pi: ExtensionAPI) {
         { value: "full", label: "full", description: "Full tool details and output" },
         { value: "compact", label: "compact", description: "Concise summaries for all built-in tools" },
         { value: "clean", label: "clean", description: "Group supported tools into Running/Done status" },
-        { value: "status", label: "status", description: "Show the current mode" },
+        { value: "selection-copy on", label: "selection-copy on", description: "Enable border-free selection copying and reload" },
+        { value: "selection-copy off", label: "selection-copy off", description: "Use native selection copying and reload" },
+        { value: "status", label: "status", description: "Show the current settings" },
       ];
       const filtered = items.filter((item) => item.value.startsWith(prefix.trim().toLowerCase()));
       return filtered.length > 0 ? filtered : null;
@@ -688,7 +692,7 @@ export default function prettyTui(pi: ExtensionAPI) {
       if (!requested) {
         if (!ctx.hasUI) {
           ctx.ui.notify(
-            `pi-pretty-tui: ${config.enabled !== false ? "enabled" : "disabled"} · mode: ${renderMode}`,
+            `pi-pretty-tui: ${config.enabled !== false ? "enabled" : "disabled"} · mode: ${renderMode} · selection copy: ${config.selectionCopy === true ? "on" : "off"}`,
             "info",
           );
           return;
@@ -697,9 +701,12 @@ export default function prettyTui(pi: ExtensionAPI) {
         const full = `Full — full tool details and output${renderMode === "full" ? " (current)" : ""}`;
         const compact = `Compact — concise tool summaries and nested calls${renderMode === "compact" ? " (current)" : ""}`;
         const clean = `Clean — group supported tools into Running/Done status${renderMode === "clean" ? " (current)" : ""}`;
-        const selected = await ctx.ui.select("pi-pretty-tui settings", [enabled, full, compact, clean]);
+        const selectionCopy = `Selection copy — ${config.selectionCopy === true ? "on" : "off"} (experimental)`;
+        const selected = await ctx.ui.select("pi-pretty-tui settings", [enabled, full, compact, clean, selectionCopy]);
         if (!selected) return;
-        requested = selected === enabled
+        requested = selected === selectionCopy
+          ? config.selectionCopy === true ? "selection-copy off" : "selection-copy on"
+          : selected === enabled
           ? config.enabled !== false ? "disable" : "enable"
           : selected === full
             ? "full"
@@ -710,9 +717,26 @@ export default function prettyTui(pi: ExtensionAPI) {
 
       if (requested === "status") {
         ctx.ui.notify(
-          `pi-pretty-tui: ${config.enabled !== false ? "enabled" : "disabled"} · mode: ${renderMode}`,
+          `pi-pretty-tui: ${config.enabled !== false ? "enabled" : "disabled"} · mode: ${renderMode} · selection copy: ${config.selectionCopy === true ? "on" : "off"}`,
           "info",
         );
+        return;
+      }
+      if (requested === "selection-copy on" || requested === "selection-copy off") {
+        const selectionCopy = requested.endsWith(" on");
+        try {
+          saveConfig({ ...config, selectionCopy });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          ctx.ui.notify(`Could not save selection-copy setting: ${message}`, "error");
+          return;
+        }
+        ctx.ui.notify(`Border-free selection copying ${selectionCopy ? "enabled" : "disabled"}; reloading…`, "info");
+        try { await ctx.reload(); }
+        catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          ctx.ui.notify(`Setting saved, but automatic reload failed: ${message}`, "warning");
+        }
         return;
       }
       if (requested === "enable" || requested === "disable") {
@@ -738,7 +762,7 @@ export default function prettyTui(pi: ExtensionAPI) {
         }
       }
       if (requested !== "full" && requested !== "compact" && requested !== "clean") {
-        ctx.ui.notify("Usage: /pretty-tui [enable|disable|full|compact|clean|status]", "error");
+        ctx.ui.notify("Usage: /pretty-tui [enable|disable|full|compact|clean|status|selection-copy on|selection-copy off]", "error");
         return;
       }
 
@@ -765,7 +789,7 @@ export default function prettyTui(pi: ExtensionAPI) {
   // render patches or override built-in tools until the next enabled reload.
   if (!activeForSession) return;
   pi.on("session_shutdown", stopWorkingElapsedTimer);
-  pi.on("session_shutdown", installSelectionCopy());
+  if (config.selectionCopy === true) pi.on("session_shutdown", installSelectionCopy());
 
   // Give Pi's main prompt editor a complete rounded frame. Render the native
   // editor at a two-column narrower width so cursor layout, wrapping, IME, and
@@ -2279,6 +2303,7 @@ export default function prettyTui(pi: ExtensionAPI) {
 
     const copyRows = new WeakMap<object, { source: string[]; padding: number; lines: string[] }>();
     const selectableMarkdown = (owner: any, source: string[]) => {
+      if (!selectionMetadataActive()) return source;
       const padding = Math.max(0, Number(owner.paddingX) || 0);
       if (!padding) return source;
       const cached = copyRows.get(owner);
@@ -3200,7 +3225,8 @@ export default function prettyTui(pi: ExtensionAPI) {
         decoratedContent = contentLines.map((line: string, index: number) => {
           const prefix = index === 0 ? childPrefix : continuation;
           const rendered = truncateToWidth(prefix + line, Math.max(1, width), "");
-          return selectableRow(rendered, visibleWidth(rendered), [[visibleWidth(prefix), visibleWidth(rendered)]]);
+          return selectionMetadataActive()
+            ? selectableRow(rendered, visibleWidth(rendered), [[visibleWidth(prefix), visibleWidth(rendered)]]) : rendered;
         });
         if (cacheable) {
           this[cleanChildRenderCacheKey] = {

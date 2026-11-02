@@ -83,6 +83,21 @@ In fullscreen, interactive activity/tool rows and copy controls tolerate same-ro
 
 In compact and full, compaction summaries use a theme-colored `compaction ▸/▾` card. The original token count, shortcut hint and complete summary remain available; click the title/body or use native `Ctrl+O` to toggle expansion. Compaction cost notices remain separate. Clean retains Pi’s original compaction box.
 
+## Optional border-free selection copying
+
+The experimental **Selection copy** option excludes plugin borders, titles and layout padding from mouse-selected text in fullscreen mode. Literal box-drawing characters in content are preserved. It is **off by default** and applies to clean, compact and full.
+
+Open `/pretty-tui` and select `Selection copy` to toggle it, or run:
+
+```text
+/pretty-tui selection-copy on
+/pretty-tui selection-copy off
+```
+
+The choice is stored as `selectionCopy` in `pretty-tui.json`; toggling automatically reloads Pi. `/pretty-tui status` shows the configured value. When off, no selection-copy/compositor/terminal-write hooks or private row annotations are installed. Disabling the whole extension also disables this feature, while preserving its saved preference. Regular-mode terminal-owned selection is unchanged.
+
+This is an opt-in feature while terminal acceptance and internal-API compatibility are being evaluated. Long transcripts retain additional annotation memory; see [the exploration and GC measurements](docs/selection-copy-exploration.md) in the source repository.
+
 ## Copy user messages
 
 In fullscreen mode, left-click a user bubble's body or border to copy its complete original text, preserving Markdown, indentation, and line breaks without the bubble frame. Existing links and code-block `[Copy]` controls retain priority; dragging to select text does not trigger whole-message copy. Pi's native clipboard path provides copy feedback. This copies text, not image attachments. Regular mode keeps terminal-owned mouse selection and copying.

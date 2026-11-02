@@ -9,6 +9,7 @@ with tempfile.TemporaryDirectory(prefix="pretty-selection-pty-") as scratch:
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 25, 100, 0, 0))
     env = dict(os.environ, PRETTY_SELECTION_READY=str(ready), PRETTY_SELECTION_RESULT=str(result), TERM="xterm-256color", PI_CODING_AGENT_DIR=scratch, PI_OFFLINE="1")
     (Path(scratch)/"settings.json").write_text(json.dumps({"tuiMode":"fullscreen","fullscreenCopyOnSelect":True,"fullscreenExitOutput":"resume-hint"}))
+    (Path(scratch)/"pretty-tui.json").write_text(json.dumps({"selectionCopy":True}))
     fixture=subprocess.check_output(["node", "tests/selection-cli-fixture.mjs", scratch], cwd=root, env=env, text=True).strip()
     cmd=[shutil.which("pi"),"--no-extensions","--no-skills","--no-prompt-templates","--no-themes",
          "--model","selection-fixture/offline","--session",fixture,

@@ -83,6 +83,21 @@ fullscreen 模式下，活动树/工具交互行与复制入口允许同一行�
 
 compact 和 full 中，压缩摘要使用主题配色的 `compaction ▸/▾` 卡片，保留原始 token 数、快捷键提示和完整摘要；点击标题/正文或使用原生 `Ctrl+O` 切换展开。压缩费用提示仍独立显示，clean 保留 Pi 原生压缩消息样式。
 
+## 可选的无边框选区复制
+
+实验性的 **Selection copy** 选项可在 fullscreen 模式下，从鼠标选区的复制结果中排除插件绘制的边框、标题和布局留白，保留正文里真实存在的框线字符。**默认关闭**，适用于 clean、compact 和 full。
+
+打开 `/pretty-tui`，选择 `Selection copy` 切换，或直接执行：
+
+```text
+/pretty-tui selection-copy on
+/pretty-tui selection-copy off
+```
+
+选择会保存为 `pretty-tui.json` 中的 `selectionCopy`，切换后自动重载 Pi；`/pretty-tui status` 可查看配置值。关闭时不安装选区复制、叠加层或终端写入补丁，也不生成私有行标记。禁用整个插件时，本功能也不会启用，但会保留开关偏好。regular 模式由终端管理的选区保持原样。
+
+目前仍需实际终端验收，并依赖 Pi 内部接口，因此作为可选功能保留。长会话会额外保留标记相关内存；源码仓库中的[探索与垃圾回收报告](docs/selection-copy-exploration.md)记录了测试范围和测量结果。
+
 ## 复制用户消息
 
 fullscreen 模式下，左键点击用户气泡的正文或边框，可复制完整原始文本，保留 Markdown、缩进和换行，不包含气泡边框。已有链接和代码块 `[Copy]` 控件保留优先级；拖动选择文本不会触发整条复制。复制使用 Pi 原生剪贴板路径及反馈，只复制文本，不复制图片附件。regular 模式保留终端自身的鼠标选择与复制行为。
