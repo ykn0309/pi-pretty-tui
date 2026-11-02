@@ -38,6 +38,14 @@ Click activity rows, tool titles or thought entries to expand and collapse detai
 
 Settings persist across sessions. Disabling the extension restores Pi's native appearance.
 
+## Markdown readability
+
+- Consistent transcript list spacing, including nested and task lists, without doubled gaps.
+- Assistant bold and italic text use theme-aware colors; set `"markdownEmphasis": "native"` in `pretty-tui.json` and run `/reload` to keep native colors.
+- H2 uses the theme heading color and bold without a filled label; other heading levels retain their existing treatments.
+
+Original Markdown, inline-code/link styling and wrapping are preserved. See [Markdown readability](./docs/markdown-readability.md) for details.
+
 ## Copying
 
 Start Pi in **fullscreen mode** to use mouse controls:
@@ -71,6 +79,10 @@ In regular mode, the terminal handles selection and copying, so this option has 
 - Keeps Pi's native input behavior and tool execution, including third-party tool implementations.
 - Nested-tool text details are saved with sessions for restoration and may be truncated. Session files can contain sensitive tool output.
 - See [Releases](https://github.com/ykn0309/pi-pretty-tui/releases) for changes and contributor acknowledgments.
+
+## Development
+
+See [local development and tests](./docs/development.md) for working from a checkout with `pi -e .` and `/reload`. Keep project-local `.pi/settings.json` out of commits.
 
 ## Uninstall
 

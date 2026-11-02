@@ -2675,28 +2675,43 @@ for (const name of ["find", "grep"]) {
     assert.ok(rendered.every((line) => visibleWidth(line) <= 20));
   }
   const primaryHeading = transcriptMarkdownFixture("# Primary").render(20);
-  const secondaryHeading = transcriptMarkdownFixture("## Secondary").render(20);
   assert.ok(primaryHeading.every((line) => !line.includes("\x1b[7m")));
   assert.ok(primaryHeading[1].includes("\x1b[4m"));
-  assert.ok(secondaryHeading[0].includes("\x1b[48;5;94m"));
-  assert.ok(secondaryHeading[0].includes("\x1b[97m") && secondaryHeading[0].includes("\x1b[4m"));
-  assert.ok(!secondaryHeading[0].includes("\x1b[7m"));
-  const lightMarkdownTheme = {
-    ...markdownTheme,
-    heading: (text) => `\x1b[38;2;154;115;38m${text}\x1b[39m`,
-  };
-  const lightSecondaryHeading = transcriptMarkdownFixture(
-    "## Light",
-    lightMarkdownTheme,
-    0,
-    0,
-    { color: (text) => `\x1b[38;2;31;35;40m${text}\x1b[39m` },
-  ).render(20);
-  assert.ok(lightSecondaryHeading[0].includes("\x1b[107m"));
-  assert.ok(lightSecondaryHeading[0].includes("\x1b[7m"));
-  assert.ok(!lightSecondaryHeading[0].includes("\x1b[48;5;94m"));
-  const sixthHeading = transcriptMarkdownFixture("###### Readable").render(20);
-  assert.ok(sixthHeading[0].includes("\x1b[3m") && sixthHeading[0].includes("\x1b[90m"));
+  const headingThemes = [
+    ["dark", markdownTheme, undefined],
+    ["light", { ...markdownTheme, heading: (text) => `\x1b[38;2;154;115;38m${text}\x1b[39m` },
+      { color: (text) => `\x1b[38;2;31;35;40m${text}\x1b[39m` }],
+    ["palette", { ...markdownTheme, heading: (text) => `\x1b[38;5;141m${text}\x1b[39m` }, undefined],
+    ["default", { ...markdownTheme, heading: (text) => text }, undefined],
+  ];
+  for (const [name, headingTheme, defaultStyle] of headingThemes) {
+    for (let level = 2; level <= 6; level++) {
+      const rendered = transcriptMarkdownFixture(
+        `${"#".repeat(level)} Themed heading`, headingTheme, 0, 0, defaultStyle,
+      ).render(40);
+      const styledRows = rendered.map((row) => row
+        .replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "").trimEnd());
+      const title = "Themed heading";
+      const expected = level === 3
+        ? headingTheme.heading(headingTheme.bold(headingTheme.underline(title)))
+        : level === 5
+          ? headingTheme.heading("┄┄ ") + headingTheme.heading(title) + headingTheme.heading(" ┄┄")
+          : level === 6
+            ? headingTheme.quote(headingTheme.italic(title))
+            : headingTheme.heading(headingTheme.bold(title));
+      assert.deepEqual(styledRows, [expected],
+        `${name} H${level}: H2 is foreground-only; other heading levels keep their styles`);
+    }
+  }
+  for (const [width, expected] of [
+    [7, ["Five"]],
+    [8, ["┄┄ Fi", "   ve ┄┄"]],
+  ]) {
+    const rows = transcriptMarkdownFixture("##### Five").render(width);
+    assert.deepEqual(rows.map((row) => stripControls(row).trimEnd()), expected,
+      `H5 keeps its original decoration threshold at width ${width}`);
+    assert.ok(rows.every((row) => visibleWidth(row) <= width));
+  }
   const narrowHeading = transcriptMarkdownFixture("# Narrow heading").render(5);
   assert.ok(narrowHeading.every((line) => visibleWidth(line) <= 5));
 
