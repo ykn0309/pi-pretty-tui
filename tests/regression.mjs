@@ -80,6 +80,7 @@ const symbolPatchKeys = [
 
 const jiti = createJiti(import.meta.url);
 const extension = await jiti.import(join(process.cwd(), "extensions/index.ts"), { default: true });
+const { removeSelectionMetadata } = await jiti.import(join(process.cwd(), "extensions/selection-ranges.ts"));
 const handlers = new Map();
 const tools = new Map();
 const toolResolvers = [];
@@ -2657,9 +2658,7 @@ for (const name of ["find", "grep"]) {
       handleMouse: (event) => component.handleMouse(event),
     };
   };
-  const stripControls = (line) => line
-    .replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "")
-    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
+  const stripControls = stripTerminalSequences;
 
   const headingCases = [
     ["# One", ["╔═════╗", "║ One ║", "╚═════╝"]],
@@ -2725,7 +2724,7 @@ for (const name of ["find", "grep"]) {
   assert.ok(!borderColors.some(([text]) => text.includes("[Copy]") || text.includes("const a")));
   assert.ok(lines.some((line) => line.includes("\x1b[90mts ")));
   assert.ok(lines.some((line) => line.includes("\x1b[90m [Copy] ")));
-  const plain = lines.map((line) => line.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, ""));
+  const plain = lines.map(stripTerminalSequences);
   const headers = plain.map((line, y) => ({ line, y })).filter(({ line }) => line.includes("[Copy]"));
   assert.equal(headers.length, 2);
   assert.ok(headers.every(({ line }) => line.trimStart().startsWith("╭─")));
@@ -2808,11 +2807,7 @@ for (const name of ["find", "grep"]) {
     markdownTheme,
   ));
   const mixedCopyLines = copyMixedComponent.render(42);
-  const mixedCopyPlain = mixedCopyLines.map((line) =>
-    line
-      .replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "")
-      .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, ""),
-  );
+  const mixedCopyPlain = mixedCopyLines.map(stripTerminalSequences);
   const mixedCopyY = mixedCopyPlain.findIndex((line) => line.includes("[Copy]"));
   assert.ok(mixedCopyY >= 0);
   const mixedCopyX = mixedCopyPlain[mixedCopyY].indexOf("[Copy]") + 1;
@@ -3256,7 +3251,7 @@ for (const key of [...protoPatchKeys, ...symbolPatchKeys]) {
   const panelTheme = { bold: (text) => text, fg: (_role, text) => text,
     bg: (role, text) => bg(role) + text + "\x1b[49m" };
   const panel = frameNativeRows("Assistant", ["ORIGINAL_ROW\x1b[0m TEXT"], 80, panelTheme, undefined, owner);
-  assert.ok(panel.lines.every((line) => line.trimStart().startsWith(bg("toolPendingBg"))));
+  assert.ok(panel.lines.every((line) => removeSelectionMetadata(line).trimStart().startsWith(bg("toolPendingBg"))));
   assert.ok(panel.lines.every((line) => stripTerminalSequences(line).startsWith(" ") && stripTerminalSequences(line).endsWith(" ")), "outer gutters have terminal background, outside the panel fill");
   assert.ok(panel.lines.every((line) => visibleWidth(line) === 80));
   assert.equal(panel.inset, 3, "mouse offsets include margin and frame padding");
@@ -3279,7 +3274,7 @@ for (const key of [...protoPatchKeys, ...symbolPatchKeys]) {
   assert.ok(combined.lines.includes(image), "image payload and cursor placement remain verbatim");
   assert.equal(frameNativeToolRows("read", source, 40, panelTheme, 1, "success", toolOwner).lines, combined.lines);
   const failed = frameNativeToolRows("bash", ["command", "error detail"], 40, panelTheme, 1, "error", {}, "Took 1.2s");
-  assert.ok(failed.lines.every((line) => line.trimStart().startsWith(bg("toolErrorBg"))));
+  assert.ok(failed.lines.every((line) => removeSelectionMetadata(line).trimStart().startsWith(bg("toolErrorBg"))));
   assert.ok(stripTerminalSequences(failed.lines.at(-1)).includes("Took 1.2s"));
   const pending = frameNativeToolRows("read", ["CALL_ONLY"], 40, panelTheme, undefined, {}, "");
   assert.ok(!pending.lines.map(stripTerminalSequences).some((line) => line.includes("Output")));

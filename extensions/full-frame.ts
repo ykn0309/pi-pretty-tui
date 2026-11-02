@@ -59,27 +59,37 @@ function renderPanel(
   const border = (s: string) => theme.fg(borderColor, s);
   const plainCaption = truncateToWidth(title, width - 6, "…");
   const caption = theme.fg(titleColor, theme.bold?.(plainCaption) ?? plainCaption);
-  const lines = [selectableRow(border("╭─ ") + caption + border(" " + "─".repeat(Math.max(0, width - visibleWidth(plainCaption) - 5)) + "╮"), width, [])];
+  const copyRanges: Array<Array<[number, number]>> | undefined = selectionMetadataActive() ? [[]] : undefined;
+  const lines = [border("╭─ ") + caption + border(" " + "─".repeat(Math.max(0, width - visibleWidth(plainCaption) - 5)) + "╮")];
   source.forEach((row, sourceY) => {
     const section = sections.get(sourceY);
     if (section) {
       const plainLabel = truncateToWidth(section.label, width - 5, "…");
       const label = theme.fg(section.color, plainLabel);
       sourceRows.set(lines.length, sourceY);
-      lines.push(selectableRow(border("├─ ") + label + border(" " + "─".repeat(Math.max(0, width - visibleWidth(plainLabel) - 5)) + "┤"), width, []));
+      lines.push(border("├─ ") + label + border(" " + "─".repeat(Math.max(0, width - visibleWidth(plainLabel) - 5)) + "┤"));
+      copyRanges?.push([]);
     }
     sourceRows.set(lines.length, sourceY);
-    if (isNativeImageRow(row)) lines.push(row);
+    if (isNativeImageRow(row)) { lines.push(row); copyRanges?.push([]); }
     else {
       const content = stripAnsiBackgrounds(row);
-      lines.push(selectableRow(border("│ ") + content + " ".repeat(Math.max(0, contentWidth - visibleWidth(content))) + border(" │"), width, [[2, 2 + Math.max(1, Math.min(contentWidth, visibleWidth(content)))]]));
+      const length = visibleWidth(content);
+      lines.push(border("│ ") + content + " ".repeat(Math.max(0, contentWidth - length)) + border(" │"));
+      copyRanges?.push([[2, 2 + Math.max(1, Math.min(contentWidth, length))]]);
     }
   });
   const footerFits = footer && visibleWidth(footer) + 6 <= width;
-  lines.push(selectableRow(footerFits
+  lines.push(footerFits
     ? border("╰" + "─".repeat(width - visibleWidth(footer) - 5) + " " + footer + " ─╯")
-    : border("╰" + "─".repeat(width - 2) + "╯"), width, []));
-  const frame = { lines: lines.map((line) => cardBackground(line, width, theme, background, borderColor)), sourceRows, contentWidth, inset: 2 };
+    : border("╰" + "─".repeat(width - 2) + "╯"));
+  copyRanges?.push([]);
+  // Apply backgrounds before adding this frame's annotations so the width
+  // cache doesn't retain an extra marked variant of every newly painted row.
+  const frame = { lines: lines.map((line, i) => {
+    const painted = cardBackground(line, width, theme, background, borderColor);
+    return copyRanges ? selectableRow(painted, width, copyRanges[i]) : painted;
+  }), sourceRows, contentWidth, inset: 2 };
   if (cacheOwner) frameCache.set(cacheOwner, { title, source: source.slice(), width, palette, sections: sectionKey, frame });
   return frame;
 }
