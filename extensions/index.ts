@@ -129,6 +129,21 @@ export default function prettyTui(pi: ExtensionAPI) {
   let currentPromptEditor: any;
   let errorChatContainer: any;
   const runtimeErrorDescriptors = new WeakMap<object, { source: string; title: string; content: string }>();
+  const expandedErrorRuns = new WeakSet<object>();
+  const errorDisclosureRows = new WeakMap<object, { start: number; end: number }>();
+  const errorDisclosureHit = (component: object, event: any) => {
+    const rows = errorDisclosureRows.get(component);
+    return renderMode !== "full" && Boolean(rows && event.y >= rows.start && event.y < rows.end);
+  };
+  const handleErrorDisclosureMouse = (component: object, event: any) => {
+    if (event.button !== "left" || !errorDisclosureHit(component, event)) return undefined;
+    if (event.type === "press") return { handled: true };
+    if (event.type !== "click") return undefined;
+    if (expandedErrorRuns.has(component)) expandedErrorRuns.delete(component);
+    else expandedErrorRuns.add(component);
+    currentTui?.requestRender?.();
+    return { handled: true };
+  };
   const errorDescriptor = (component: any) => {
     const runtime = runtimeErrorDescriptors.get(component);
     if (runtime) return runtime;
@@ -629,23 +644,45 @@ export default function prettyTui(pi: ExtensionAPI) {
 
   const renderStandaloneError = (member: ActivityMember, width: number, component?: any): string[] => {
     const run = component && renderMode !== "full" ? errorRun(component) : { hidden: false, count: 1, compact: false };
+    if (component) errorDisclosureRows.delete(component);
     if (run.hidden) return [];
     const theme = defaultActivityTheme();
     const style = activityUpdateStyle(member, theme);
     const original = component ? errorDescriptor(component) : undefined;
-    const title = stripTerminalSequences(original?.title ?? member.updateTitle ?? "Error");
-    const content = stripTerminalSequences(original?.content || member.updateContent || "");
-    const heading = style.icon + style.title(title);
-    const prefix = heading + (content ? theme.fg("dim", " · ") : "");
-    const text = prefix + theme.fg("muted", content) + (run.count > 1 ? theme.fg("dim", ` ×${run.count}`) : "");
-    // Wrap rather than truncate; all original detail lines remain accessible.
-    const continuation = " ".repeat(Math.min(visibleWidth(prefix), Math.max(0, Math.floor(width / 3))));
-    const rows: string[] = [];
-    for (const line of text.split("\n")) {
-      const wrapped = wrapTextWithAnsi(line, Math.max(1, width - visibleWidth(continuation)));
-      rows.push(...wrapped.map((row, index) => (rows.length || index ? continuation : "") + row));
+    const renderError = (titleText: string, contentText: string, count = 1): string[] => {
+      const title = stripTerminalSequences(titleText);
+      const content = stripTerminalSequences(contentText);
+      const heading = style.icon + style.title(title);
+      const prefix = heading + (content ? theme.fg("dim", " · ") : "");
+      const text = prefix + theme.fg("muted", content) + (count > 1 ? theme.fg("dim", ` [×${count}]`) : "");
+      // Wrap rather than truncate; all original detail lines remain accessible.
+      const continuation = " ".repeat(Math.min(visibleWidth(prefix), Math.max(0, Math.floor(width / 3))));
+      const rows: string[] = [];
+      for (const line of text.split("\n")) {
+        const wrapped = wrapTextWithAnsi(line, Math.max(1, width - visibleWidth(continuation)));
+        rows.push(...wrapped.map((row, index) => (rows.length || index ? continuation : "") + row));
+      }
+      return rows.map((line) => truncateToWidth(line, Math.max(1, width), ""));
+    };
+    const rows = [
+      ...(run.compact ? [] : [""]),
+      ...renderError(original?.title ?? member.updateTitle ?? "Error", original?.content || member.updateContent || "", run.count),
+    ];
+    if (component && run.count > 1) {
+      errorDisclosureRows.set(component, { start: run.compact ? 0 : 1, end: rows.length });
+      mouseClickHitTests.set(component, (event) => errorDisclosureHit(component, event));
+      if (expandedErrorRuns.has(component)) {
+        // The visible head owns the expanded projection. Original retry
+        // components stay untouched and hidden, and only the head counts them.
+        const children = errorChatContainer?.children ?? [];
+        const index = children.indexOf(component);
+        for (const retry of children.slice(index + 1, index + run.count)) {
+          const descriptor = errorDescriptor(retry);
+          if (descriptor) rows.push(...renderError(descriptor.title, descriptor.content));
+        }
+      }
     }
-    return [...(run.compact ? [] : [""]), ...rows.map((line) => truncateToWidth(line, Math.max(1, width), ""))];
+    return rows;
   };
 
   const renderPendingActivityUpdate = (member: ActivityMember, width: number, component?: any): string[] => {
@@ -1429,10 +1466,15 @@ export default function prettyTui(pi: ExtensionAPI) {
       }
       if (renderMode === "compact") {
         const terminal = assistantTerminalUpdate(this[originalMessageKey] ?? this.lastMessage);
-        if (terminal) output.push(...renderPendingActivityUpdate(terminal, width, this));
+        if (terminal) {
+          const offset = output.length;
+          output.push(...renderPendingActivityUpdate(terminal, width, this));
+          const disclosure = errorDisclosureRows.get(this);
+          if (disclosure) errorDisclosureRows.set(this, { start: disclosure.start + offset, end: disclosure.end + offset });
+        }
       }
       panelAssistantViews.set(this, { rows, width: innerWidth, height: nativeLines.length });
-      mouseClickHitTests.set(this, (event) => thoughtRows.has(event.y));
+      mouseClickHitTests.set(this, (event) => thoughtRows.has(event.y) || errorDisclosureHit(this, event));
       return renderMode === "compact" && width < 8
         ? output.map((line) => isNativeImageRow(line) ? line : truncateToWidth(line, Math.max(1, width), "")) : output;
     };
@@ -1481,6 +1523,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     };
 
     const renderAssistantTranscript = function (this: any, width: number): string[] {
+      errorDisclosureRows.delete(this);
       const message = this[originalMessageKey] ?? this.lastMessage;
       if (
         message &&
@@ -1606,6 +1649,11 @@ export default function prettyTui(pi: ExtensionAPI) {
     };
 
     const handleAssistantTranscriptMouse = function (this: any, event: any) {
+      if (errorDescriptor(this)) {
+        patchedRender.call(this, event.width);
+        const disclosure = handleErrorDisclosureMouse(this, event);
+        if (disclosure) return disclosure;
+      }
       const message = this[originalMessageKey] ?? this.lastMessage;
       if (renderMode !== "clean") {
         patchedRender.call(this, event.width);
@@ -1774,7 +1822,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     const component: Component = {
       render: (width: number) => renderActivityUpdateProjection(group, member, width, component),
       invalidate() {},
-      handleMouse: (event: any) => handleActivityUpdateMouse(group, member, event),
+      handleMouse: (event: any) => handleErrorDisclosureMouse(component, event) ?? handleActivityUpdateMouse(group, member, event),
     } as Component;
     if (severity === "error") runtimeErrorDescriptors.set(component, {
       source: "runtime:error", title, content,

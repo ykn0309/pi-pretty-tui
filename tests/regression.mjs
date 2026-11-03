@@ -1737,10 +1737,10 @@ for (const name of ["find", "grep"]) {
   show("Error\nWebSocket error");
   show("Error\nfetch failed");
   show("Error\nfetch failed");
-  assert.match(plain(), /✕ Error · WebSocket error\n✕ Error · fetch failed ×2/);
+  assert.match(plain(), /✕ Error · WebSocket error\n✕ Error · fetch failed \[×2\]/);
   assert.deepEqual(children[2].render(100), []);
   show("Error\nfetch failed");
-  assert.match(plain(), /fetch failed ×3/);
+  assert.match(plain(), /fetch failed \[×3\]/);
   children.push(new Text("A message boundary", 0, 0));
   show("Error\nfetch failed");
   assert.equal((plain().match(/fetch failed/g) ?? []).length, 2);
@@ -1757,7 +1757,7 @@ for (const name of ["find", "grep"]) {
   const second = new AssistantMessageComponent(secondMessage);
   const third = new AssistantMessageComponent({ ...rawMessage, timestamp: "compact-error-3" });
   children.push(first, second, third);
-  assert.match(plain(), /✕ Error · fetch failed ×3/);
+  assert.match(plain(), /✕ Error · fetch failed \[×3\]/);
   assert.deepEqual(second.render(100), []);
   assert.deepEqual(third.render(100), []);
   assert.equal(JSON.stringify(rawMessage), rawBefore);
@@ -1777,13 +1777,13 @@ for (const name of ["find", "grep"]) {
   const restored = [first, second, third].map((component, index) => new AssistantMessageComponent({ ...rawMessage, timestamp: `restored-error-${index}` }));
   children.splice(0, children.length, ...restored);
   restored[2].render(100); // suppressed even when it renders before its owner
-  assert.match(plain(), /✕ Error · fetch failed ×3/);
+  assert.match(plain(), /✕ Error · fetch failed \[×3\]/);
   assert.equal(children.length, 3, "UI folding must not remove original components");
   const commandContext = { hasUI: true, ui: { notify() {} } };
   await commands.get("pretty-tui").handler("full", commandContext);
   assert.equal(plain().split("fetch failed").length - 1, 3);
   await commands.get("pretty-tui").handler("clean", commandContext);
-  assert.match(plain(), /fetch failed ×3/);
+  assert.match(plain(), /fetch failed \[×3\]/);
 }
 
 // AgentRouter retries differ only in their trace annotation. Compare that
@@ -1899,6 +1899,85 @@ for (const name of ["find", "grep"]) {
       new AssistantMessageComponent(message(errors[1], 1, [{ type: "text", text: "Partial answer" }])));
     assert.equal((plain().match(/✕ Error/g) ?? []).length, 2);
     assert.ok(plain().includes("Partial answer"));
+  }
+  await commands.get("pretty-tui").handler("clean", commandContext);
+}
+
+// Repeated errors disclose every original occurrence from the visible head,
+// without triangles, numbering, indentation or mutation of native components.
+{
+  const commandContext = { hasUI: true, ui: { notify() {} } };
+  const error = (id) => `Service unavailable [trace_id=${id}]`;
+  const ids = ["0123456789abcdef", "fedcba9876543210", "abcdef0123456789", "9876543210abcdef"];
+  for (const mode of ["clean", "compact"]) for (const source of ["runtime", "assistant"]) {
+    await commands.get("pretty-tui").handler(mode, commandContext);
+    await emit("session_start", {}, sessionContext([]));
+    const children = [];
+    const host = { ui: { requestRender() {} }, chatContainer: {
+      children, addChild(component) { children.push(component); },
+    } };
+    InteractiveMode.prototype.showError.call(host, "Bind error container");
+    children.length = 0;
+    const messages = [];
+    const append = (id) => {
+      if (source === "runtime") InteractiveMode.prototype.showError.call(host, `Error\n${error(id)}`);
+      else {
+        const message = { role: "assistant", timestamp: `disclosure-${id}`, stopReason: "error", errorMessage: error(id), content: [] };
+        messages.push(message);
+        children.push(new AssistantMessageComponent(message));
+      }
+    };
+    ids.slice(0, 3).forEach(append);
+    const before = JSON.stringify(messages);
+    const head = children[0];
+    const all = (width = 120) => children.flatMap(component => component.render(width)).map(stripTerminalSequences).join("\n");
+    const label = `${mode}/${source}`;
+    const click = (motions = []) => {
+      const lines = head.render(120);
+      const plain = lines.map(stripTerminalSequences);
+      const y = plain.findIndex(line => line.includes("[×"));
+      assert.ok(y >= 0, `${label}: clickable count is visible`);
+      const x = plain[y].indexOf("[×");
+      mouseGestureFixture(head, lines, 120).gesture(x, y, motions);
+    };
+    assert.equal((all().match(/✕ Error/g) ?? []).length, 1, label);
+    assert.ok(all().includes("[×3]"));
+    click([[5, 0]]);
+    assert.equal((all().match(/✕ Error/g) ?? []).length, 1, `${label}: dragging does not expand`);
+    click([[1, 0]]);
+    assert.equal((all().match(/✕ Error/g) ?? []).length, 3, `${label}: native click expands`);
+    for (const id of ids.slice(0, 3)) assert.equal(all().split(error(id)).length - 1, 1);
+    const rows = all().split("\n").filter(line => line.includes("trace_id="));
+    assert.ok(rows.every(line => line.startsWith("✕ Error · ")), `${label}: all prefixes align`);
+    assert.ok(!all().match(/[▸▾]|第\s*\d+\s*次/));
+    assert.ok(children.slice(1).every(component => component.render(120).length === 0), "only the head projects retries");
+    assert.equal(JSON.stringify(messages), before);
+    append(ids[3]);
+    assert.equal((all().match(/✕ Error/g) ?? []).length, 4, `${label}: appended retries stay expanded`);
+    assert.ok(all().includes("[×4]"));
+    for (const width of [12, 30, 80]) {
+      const rendered = children.flatMap(component => component.render(width)).map(stripTerminalSequences);
+      assert.ok(rendered.every(line => visibleWidth(line) <= width), `${label}: width ${width}`);
+      assert.ok(!rendered.join("\n").includes("…"));
+    }
+    // Resizing and switching modes do not discard the user's disclosure choice.
+    await commands.get("pretty-tui").handler("full", commandContext);
+    assert.equal((all().match(/Service unavailable/g) ?? []).length, 4);
+    for (const id of ids) assert.ok(all().includes(id));
+    assert.ok(!all().includes("[×"));
+    await commands.get("pretty-tui").handler(mode, commandContext);
+    assert.equal((all().match(/✕ Error/g) ?? []).length, 4);
+    click();
+    assert.equal((all().match(/✕ Error/g) ?? []).length, 1, `${label}: second click collapses`);
+    assert.ok(all().includes(ids[0]) && !all().includes(ids[1]));
+    assert.equal(children.length, 4);
+    assert.equal(head.handleMouse({ type: "click", button: "right", x: 0, y: 1, width: 120 }), undefined);
+    assert.equal((all().match(/✕ Error/g) ?? []).length, 1);
+    // A changed reason/boundary is never pulled into an expanded projection.
+    children.splice(2, 0, new Text("A transcript boundary", 0, 0));
+    click();
+    assert.equal((all().match(/✕ Error/g) ?? []).length, 3);
+    assert.ok(!all().includes("[×4]"));
   }
   await commands.get("pretty-tui").handler("clean", commandContext);
 }
@@ -2313,13 +2392,13 @@ for (const name of ["find", "grep"]) {
     assert.match(all(), mode === "full" ? /info notice/ : /◇ info notice/);
     assert.match(all(), mode === "full" ? /Warning: warning notice/ : /⚠ warning notice/);
     if (mode === "full") assert.equal(all().split("SHARED_ERROR").length - 1, 2);
-    else assert.match(all(), /✕ Error · SHARED_ERROR ×2/);
+    else assert.match(all(), /✕ Error · SHARED_ERROR \[×2\]/);
     assert.ok(all().includes("SHARED_NOTICE_DETAIL"));
     assert.ok(!widgetText().includes("SHARED_ERROR"));
     for (const target of ["compact", "full", "clean"]) {
       await commands.get("pretty-tui").handler(target, commandContext);
       if (target === "full" || mode === "full") assert.equal(all().split("SHARED_ERROR").length - 1, 2);
-      else assert.match(all(), /SHARED_ERROR ×2/);
+      else assert.match(all(), /SHARED_ERROR \[×2\]/);
     }
     await commands.get("pretty-tui").handler(mode, commandContext);
     const custom = new CustomMessageComponent({ role: "custom", customType: "shared-update", content: "CUSTOM_SHARED_DETAIL", display: true, timestamp: `${mode}-custom` });
