@@ -1,6 +1,6 @@
 {
   "name": "pi-pretty-tui",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "A beautiful, polished TUI for the Pi coding agent",
   "license": "MIT",
   "author": "Kainan Yang <ykn0309@whu.edu.cn>",
