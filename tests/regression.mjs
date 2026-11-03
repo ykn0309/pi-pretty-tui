@@ -1935,9 +1935,9 @@ for (const name of ["find", "grep"]) {
     const click = (motions = []) => {
       const lines = head.render(120);
       const plain = lines.map(stripTerminalSequences);
-      const y = plain.findIndex(line => line.includes("[×"));
+      const y = plain.findIndex(line => line.includes("[×") || line.includes("[Collapse]"));
       assert.ok(y >= 0, `${label}: clickable count is visible`);
-      const x = plain[y].indexOf("[×");
+      const x = plain[y].indexOf(plain[y].includes("[Collapse]") ? "[Collapse]" : "[×");
       mouseGestureFixture(head, lines, 120).gesture(x, y, motions);
     };
     assert.equal((all().match(/✕ Error/g) ?? []).length, 1, label);
@@ -1954,7 +1954,8 @@ for (const name of ["find", "grep"]) {
     assert.equal(JSON.stringify(messages), before);
     append(ids[3]);
     assert.equal((all().match(/✕ Error/g) ?? []).length, 4, `${label}: appended retries stay expanded`);
-    assert.ok(all().includes("[×4]"));
+    assert.ok(all().includes("[Collapse]"));
+    assert.ok(!all().includes("[×4]"));
     for (const width of [12, 30, 80]) {
       const rendered = children.flatMap(component => component.render(width)).map(stripTerminalSequences);
       assert.ok(rendered.every(line => visibleWidth(line) <= width), `${label}: width ${width}`);
@@ -1964,11 +1965,12 @@ for (const name of ["find", "grep"]) {
     await commands.get("pretty-tui").handler("full", commandContext);
     assert.equal((all().match(/Service unavailable/g) ?? []).length, 4);
     for (const id of ids) assert.ok(all().includes(id));
-    assert.ok(!all().includes("[×"));
+    assert.ok(!all().includes("[×") && !all().includes("[Collapse]"));
     await commands.get("pretty-tui").handler(mode, commandContext);
     assert.equal((all().match(/✕ Error/g) ?? []).length, 4);
     click();
     assert.equal((all().match(/✕ Error/g) ?? []).length, 1, `${label}: second click collapses`);
+    assert.ok(all().includes("[×4]") && !all().includes("[Collapse]"));
     assert.ok(all().includes(ids[0]) && !all().includes(ids[1]));
     assert.equal(children.length, 4);
     assert.equal(head.handleMouse({ type: "click", button: "right", x: 0, y: 1, width: 120 }), undefined);

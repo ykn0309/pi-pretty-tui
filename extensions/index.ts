@@ -654,7 +654,7 @@ export default function prettyTui(pi: ExtensionAPI) {
       const content = stripTerminalSequences(contentText);
       const heading = style.icon + style.title(title);
       const prefix = heading + (content ? theme.fg("dim", " · ") : "");
-      const text = prefix + theme.fg("muted", content) + (count > 1 ? theme.fg("dim", ` [×${count}]`) : "");
+      const text = prefix + theme.fg("muted", content) + (count > 1 ? theme.fg("dim", component && expandedErrorRuns.has(component) ? " [Collapse]" : ` [×${count}]`) : "");
       // Wrap rather than truncate; all original detail lines remain accessible.
       const continuation = " ".repeat(Math.min(visibleWidth(prefix), Math.max(0, Math.floor(width / 3))));
       const rows: string[] = [];
