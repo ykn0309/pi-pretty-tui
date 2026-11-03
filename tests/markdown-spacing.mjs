@@ -489,6 +489,70 @@ function testCodeCopyFollowsAddedRows() {
   assert.equal(inList.press(inList.region.y), true, "an in-list press is handled");
 }
 
+async function testCodeCopySurvivesReusedBlocks(extension) {
+  const copied = [];
+  try {
+    InteractiveMode.prototype.renderSessionEntries.call({ ui: {
+      mode: "fullscreen", copyTextToClipboard: (text) => { copied.push(text); return true; },
+    } }, []);
+  } catch { /* Record the fullscreen clipboard callback without loading a session. */ }
+  for (const theme of THEMES) {
+    initTheme(theme, false);
+    for (const mode of MODES) {
+      await extension.setMode(mode);
+      // Two headers have the same geometry but different code, plus a repeated
+      // source block and a nested block: matching by header alone is not enough.
+      const codes = ["const first = true;", "const other = true;", "const first = true;", "echo nested"];
+      const source = `Intro\n\n\`\`\`ts\n${codes[0]}\n\`\`\`\n\nMiddle\n\n\`\`\`ts\n${codes[1]}\n\`\`\`\n\nRepeat\n\n\`\`\`ts\n${codes[2]}\n\`\`\`\n\n- Item\n  \`\`\`sh\n  ${codes[3]}\n  \`\`\`\n\nAfter`;
+      const component = newAssistant(source);
+      component.render(90);
+      const markdown = markdownOf(component);
+      const key = Object.getOwnPropertySymbols(markdown).find((symbol) => symbol.description === "pretty-tui.code-block-regions");
+      const check = (expected, label) => {
+        assert.deepEqual(markdown[key]?.map(region => region.code), expected, label);
+        for (const region of markdown[key]) {
+          const row = plain(markdown.cachedLines[region.y]);
+          assert.ok(row.includes("[Copy]"), `${label}: visible button`);
+          // Nested list indentation is part of the rendered row.
+          const x = row.indexOf("[Copy]");
+          assert.ok(x >= 0);
+          const before = copied.length;
+          assert.equal(markdown.handleMouse({type:"click",button:"left",x,y:region.y,width:90})?.handled, true);
+          assert.equal(copied.length, before + 1, `${label}: click reaches clipboard`);
+          assert.equal(copied.at(-1), region.code, `${label}: clipboard gets the correct code`);
+        }
+      };
+      check(codes, `${theme}/${mode}: initial`);
+      // Strong references deliberately keep Pi's weak block caches available.
+      const held = [];
+      for (let index = 0; index < 20; index++) {
+        held.push(markdown.blocks?.deref());
+        component.updateContent(assistantMessage(`${source} more streamed text ${index}`), true);
+        component.render(90);
+        assert.equal(markdownOf(component), markdown, "Pi reuses the Markdown component");
+        check(codes, `${theme}/${mode}: cached stream ${index}`);
+      }
+      held.push(markdown.blocks?.deref());
+      const extra = "echo latest";
+      component.updateContent(assistantMessage(`${source}\n\n\`\`\`sh\n${extra}\n\`\`\`\n\nTail`), true);
+      component.render(90);
+      check([...codes, extra], `${theme}/${mode}: cached and new blocks`);
+      component.render(60);
+      component.render(90);
+      check([...codes, extra], `${theme}/${mode}: resize`);
+      component.invalidate();
+      component.render(90);
+      check([...codes, extra], `${theme}/${mode}: invalidate`);
+      component.updateContent(assistantMessage("No code remains."), false);
+      component.render(90);
+      assert.deepEqual(markdown[key], [], "removed code leaves no stale hit regions");
+      assert.ok(held.length);
+    }
+  }
+  initTheme("dark", false);
+  await extension.setMode("clean");
+}
+
 async function testShutdownRestoresNative(extension, nativeMethods, native) {
   assert.notEqual(Markdown.prototype.renderList, nativeMethods.renderList, "the extension patched renderList");
   await extension.shutdown();
@@ -522,6 +586,7 @@ testCachedTokensAndRerenders();
 testPreservedOrderedMarkers();
 testStreamingFrames();
 testCodeCopyFollowsAddedRows();
+await testCodeCopySurvivesReusedBlocks(extension);
 await testShutdownRestoresNative(extension, nativeMethods, native);
 
 rmSync(agentDir, { recursive: true, force: true });

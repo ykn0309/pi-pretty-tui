@@ -2310,6 +2310,11 @@ export default function prettyTui(pi: ExtensionAPI) {
   const codeBlockRegionsKey = Symbol("pretty-tui.code-block-regions");
   const transcriptMarkdownStateKey = Symbol("pretty-tui.transcript-markdown-state");
   if (!markdownPrototype[codeBlockPatchKey]) {
+    // Pi 1.5 reuses rendered top-level blocks while text streams. Keep copy
+    // descriptors with each native block's highlighting-cache identity, weakly,
+    // so reused pixels retain their hit regions without disabling that cache.
+    const blockCopyDescriptors = new WeakMap<object, { generation: number; blocks: any[] }>();
+    let copyRenderGeneration = 0;
     const originalInvalidate = markdownPrototype.invalidate;
     const originalRender = markdownPrototype.render;
     const originalRenderToken = markdownPrototype.renderToken;
@@ -2354,14 +2359,22 @@ export default function prettyTui(pi: ExtensionAPI) {
 
       const needsRender =
         !this.cachedLines || this.cachedText !== this.text || this.cachedWidth !== width;
-      if (needsRender) this[codeBlockCollectionKey] = [];
+      if (needsRender) this[codeBlockCollectionKey] = Object.assign([], { generation: ++copyRenderGeneration });
 
       const lines = originalRender.call(this, width);
       if (!needsRender) return selectableMarkdown(this, lines);
 
       const regions: Array<{ xStart: number; xEnd: number; y: number; code: string }> = [];
       let searchFrom = 0;
-      for (const block of this[codeBlockCollectionKey] ?? []) {
+      const nativeBlocks = this.blocks?.deref();
+      const nativeTokens = this.cachedTokens?.deref()?.tokens;
+      const copyBlocks = nativeBlocks && nativeTokens
+        ? nativeTokens.flatMap((token: any) => {
+            const block = nativeBlocks.get(token.raw);
+            return block ? blockCopyDescriptors.get(block.highlightedCode)?.blocks ?? [] : [];
+          })
+        : this[codeBlockCollectionKey] ?? [];
+      for (const block of copyBlocks) {
         let headerLine = -1;
         for (let lineIndex = searchFrom; lineIndex < lines.length; lineIndex += 1) {
           const renderedLine = lines[lineIndex] ?? "";
@@ -2528,13 +2541,23 @@ export default function prettyTui(pi: ExtensionAPI) {
       ];
 
       if (showCopyButton && Array.isArray(this[codeBlockCollectionKey])) {
-        this[codeBlockCollectionKey].push({
+        const descriptor = {
           buttonStart,
           buttonWidth: visibleWidth(copyLabel),
           code,
           styledTopRule,
           topRule,
-        });
+        };
+        const collection = this[codeBlockCollectionKey] as any[] & { generation: number };
+        collection.push(descriptor);
+        if (this.blockHighlightedCode) {
+          let cached = blockCopyDescriptors.get(this.blockHighlightedCode);
+          if (!cached || cached.generation !== collection.generation) {
+            cached = { generation: collection.generation, blocks: [] };
+            blockCopyDescriptors.set(this.blockHighlightedCode, cached);
+          }
+          cached.blocks.push(descriptor);
+        }
       }
       if (nextTokenType && nextTokenType !== "space") lines.push("");
       return lines;
