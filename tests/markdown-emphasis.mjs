@@ -619,7 +619,7 @@ function testWrappedNestedSpans() {
 }
 
 // Assert the heading policy independently of the emphasis opt-out oracle.
-// Only H2 changes; H3–H6 keep their differentiated native treatments.
+// H2–H4 use descending emphasis; H1, H5 and H6 retain their treatments.
 // Panel backgrounds are legitimate; headings must not add one.
 async function testThemeCompliantHeadings(extension) {
   for (const theme of HEADING_THEMES) {
@@ -635,8 +635,8 @@ async function testThemeCompliantHeadings(extension) {
           const foreground = foregroundOf(level === 6 ? "mdQuote" : "mdHeading");
           const background = spanCells(rows, "BodyW")[0].bg;
           const headingStyle = {
-            fg: foreground, bg: background, bold: level <= 4,
-            italic: level === 6, underline: level === 3, inverse: false,
+            fg: foreground, bg: background, bold: level <= 3,
+            italic: level === 6, underline: level === 2, inverse: false,
           };
           for (const word of ["HeadW", "TailW"]) expectSpan(rows, word, headingStyle, label);
           expectSpan(rows, "StrongW", { ...headingStyle, bold: true }, label);
@@ -672,8 +672,8 @@ async function testThemeCompliantHeadings(extension) {
       assert.ok(rows.every((row) => visibleWidth(row) <= width), `H${level}/${width}: wraps within width`);
       for (const word of ["AlphaW", "BetaW", "GammaW"]) {
         expectSpan(rows, word, {
-          fg: foregroundOf(level === 6 ? "mdQuote" : "mdHeading"), bold: level <= 4,
-          italic: level === 6, underline: level === 3, bg: null, inverse: false,
+          fg: foregroundOf(level === 6 ? "mdQuote" : "mdHeading"), bold: level <= 3,
+          italic: level === 6, underline: level === 2, bg: null, inverse: false,
         }, `H${level}/${width}: wrapped rows retain heading style`);
       }
     }
@@ -686,7 +686,7 @@ async function testThemeCompliantHeadings(extension) {
     initTheme(theme, false);
     component.invalidate();
     expectSpan(component.render(90), "SwitchW", {
-      fg: foregroundOf("mdHeading"), bold: true, bg: null, inverse: false, underline: false,
+      fg: foregroundOf("mdHeading"), bold: true, bg: null, inverse: false, underline: true,
     }, `${theme}: heading follows theme switch`);
   }
   initTheme("dark", false);

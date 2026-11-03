@@ -2692,15 +2692,15 @@ for (const name of ["find", "grep"]) {
       const styledRows = rendered.map((row) => row
         .replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "").trimEnd());
       const title = "Themed heading";
-      const expected = level === 3
+      const expected = level === 2
         ? headingTheme.heading(headingTheme.bold(headingTheme.underline(title)))
         : level === 5
           ? headingTheme.heading("┄┄ ") + headingTheme.heading(title) + headingTheme.heading(" ┄┄")
           : level === 6
             ? headingTheme.quote(headingTheme.italic(title))
-            : headingTheme.heading(headingTheme.bold(title));
+            : level === 4 ? headingTheme.heading(title) : headingTheme.heading(headingTheme.bold(title));
       assert.deepEqual(styledRows, [expected],
-        `${name} H${level}: H2 is foreground-only; other heading levels keep their styles`);
+        `${name} H${level}: H2 underline, H3 bold and H4 plain retain distinct heading levels`);
     }
   }
   for (const [width, expected] of [

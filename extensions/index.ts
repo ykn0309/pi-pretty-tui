@@ -2407,14 +2407,14 @@ export default function prettyTui(pi: ExtensionAPI) {
           return lines;
         };
         const headingStyle = (text: string) => this.theme.heading(text);
-        // Only H2 loses its label background/underline. Keep the existing
-        // differentiated treatments for H1 and H3–H6.
+        // Descending emphasis: framed H1, underlined H2, bold H3,
+        // plain H4, decorative H5, and quote-colored italic H6.
         const titleStyle =
-          level === 1 || level === 3
+          level === 1 || level === 2
             ? (text: string) => headingStyle(this.theme.bold(this.theme.underline(text)))
-            : level === 2 || level === 4
+            : level === 3
               ? (text: string) => headingStyle(this.theme.bold(text))
-              : level === 5
+              : level === 4 || level === 5
                 ? headingStyle
                 : (text: string) => this.theme.quote(this.theme.italic(text));
         const titleContext = withNativeEmphasis({
