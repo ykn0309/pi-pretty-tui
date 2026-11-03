@@ -1,6 +1,13 @@
 import { installSelectionCopy, selectableRow, selectionMetadataActive } from "./selection-ranges.js";
 import { isNativeImageRow } from "./ansi-style.js";
 import { cardMargin, cardBackground, frameNativeRows, nativeFrameWidth } from "./full-frame.js";
+import {
+  themedInlineContext,
+  withNativeEmphasis,
+  type InlineStyleContext,
+  type InlineToken,
+} from "./markdown-emphasis.js";
+import { gapRowsAfterBlock, renderSpacedList } from "./markdown-spacing.js";
 import { ThoughtPresentation } from "./thought-presentation.js";
 import { isThirdPartyTool, renderToolProjection, THIRD_PARTY_TOOL, toolLabel, type ToolProjection } from "./tool-presentation.js";
 import { NestedTools, NESTED_SNAPSHOT_ENTRY } from "./nested-tools.js";
@@ -65,6 +72,8 @@ type PrettyTuiConfig = {
   mode?: PrettyTuiMode;
   /** Exclude plugin decoration from fullscreen selections. Opt-in. */
   selectionCopy?: boolean;
+  /** "native" keeps Pi's flags-only strong and emphasis. Read when the extension loads. */
+  markdownEmphasis?: "themed" | "native";
   /** Legacy location used by the first mode implementation. */
   bash?: {
     mode?: "full" | "compact";
@@ -303,6 +312,17 @@ export default function prettyTui(pi: ExtensionAPI) {
     }
   };
   const transcriptMarkdownActive = () => transcriptMarkdownDepth > 0;
+  // Assistant answers only. The transcript scope also covers user messages,
+  // thinking and activity updates, which keep Pi's strong and emphasis styling.
+  const assistantBodyMarkdown = new WeakSet<object>();
+  const markAssistantBodyMarkdown = (component: any) => {
+    // Pi adds answer text directly; a thought block is wrapped in a MouseRegion.
+    // A component built before this runtime is covered too: the rendered-mode
+    // symbols are per runtime, so its first render here re-runs updateContent.
+    for (const child of component.contentContainer?.children ?? []) {
+      if (child instanceof Markdown && !(child as any).defaultTextStyle) assistantBodyMarkdown.add(child);
+    }
+  };
 
   const setCleanGroupMembers = (lastToolCallId: string, toolCallIds: string[]) => {
     cleanGroupToolCallIds.set(lastToolCallId, toolCallIds);
@@ -1405,6 +1425,7 @@ export default function prettyTui(pi: ExtensionAPI) {
         originalUpdateContent.call(this, renderMode === "compact" && assistantTerminalState(message)
           ? { ...message, errorMessage: undefined, stopReason: "stop" } : message, isStreaming);
         this.lastMessage = message;
+        markAssistantBodyMarkdown(this);
         if (eligibleThinking(message)) thinkingComponents.set(assistantMessageKey(message), this);
         return;
       }
@@ -1432,6 +1453,7 @@ export default function prettyTui(pi: ExtensionAPI) {
         this.hideThinkingBlock = previousHideThinkingBlock;
       }
       this.lastMessage = message;
+      markAssistantBodyMarkdown(this);
     };
 
     const renderAssistantTranscript = function (this: any, width: number): string[] {
@@ -2385,36 +2407,20 @@ export default function prettyTui(pi: ExtensionAPI) {
           return lines;
         };
         const headingStyle = (text: string) => this.theme.heading(text);
-        const foregroundLuminance = (styled: string): number | undefined => {
-          const trueColor = /\x1b\[38;2;(\d+);(\d+);(\d+)m/.exec(styled);
-          if (!trueColor) return undefined;
-          const [, red, green, blue] = trueColor.map(Number);
-          return red * 0.2126 + green * 0.7152 + blue * 0.0722;
-        };
-        const defaultLuminance = foregroundLuminance(this.applyDefaultStyle("M"));
-        const headingLuminance = foregroundLuminance(headingStyle("M"));
-        const darkTheme =
-          defaultLuminance !== undefined
-            ? defaultLuminance >= 128
-            : (headingLuminance ?? 255) >= 160;
-        const whiteStyle = (text: string) => `\x1b[97m${text}\x1b[39m`;
+        // Only H2 loses its label background/underline. Keep the existing
+        // differentiated treatments for H1 and H3–H6.
         const titleStyle =
           level === 1 || level === 3
             ? (text: string) => headingStyle(this.theme.bold(this.theme.underline(text)))
-            : level === 2
-              ? (text: string) =>
-                  (darkTheme ? whiteStyle : headingStyle)(
-                    this.theme.bold(this.theme.underline(text)),
-                  )
-              : level === 4
-                ? (text: string) => headingStyle(this.theme.bold(text))
-                : level === 5
-                  ? headingStyle
-                  : (text: string) => this.theme.quote(this.theme.italic(text));
-        const titleContext = {
+            : level === 2 || level === 4
+              ? (text: string) => headingStyle(this.theme.bold(text))
+              : level === 5
+                ? headingStyle
+                : (text: string) => this.theme.quote(this.theme.italic(text));
+        const titleContext = withNativeEmphasis({
           applyText: titleStyle,
           stylePrefix: this.getStylePrefix(titleStyle),
-        };
+        });
         const title = this.renderInlineTokens(token.tokens || [], titleContext);
 
         if (level === 1 && maxWidth >= 6) {
@@ -2434,17 +2440,6 @@ export default function prettyTui(pi: ExtensionAPI) {
             }),
             frameStyle(`╚${"═".repeat(frameWidth - 2)}╝`),
           ];
-          return addHeadingSpacing(lines);
-        }
-
-        if (level === 2) {
-          // Reverse only the rendered title cells: the theme's heading color
-          // becomes a compact, content-width background label with no frame.
-          const lines = wrapTextWithAnsi(title, maxWidth).map((line: string) =>
-            darkTheme
-              ? `\x1b[48;5;94m${line}\x1b[49m`
-              : `\x1b[107m\x1b[7m${line}\x1b[27m\x1b[49m`
-          );
           return addHeadingSpacing(lines);
         }
 
@@ -2468,7 +2463,10 @@ export default function prettyTui(pi: ExtensionAPI) {
       }
 
       if (token?.type !== "code") {
-        return originalRenderToken.call(this, token, width, nextTokenType, styleContext);
+        return [
+          ...originalRenderToken.call(this, token, width, nextTokenType, styleContext),
+          ...gapRowsAfterBlock(token?.type, nextTokenType),
+        ];
       }
 
       const maxWidth = Math.max(1, width);
@@ -2621,7 +2619,11 @@ export default function prettyTui(pi: ExtensionAPI) {
       this.theme.listBullet = (marker: string) =>
         originalListBullet(marker.replace(/^- /, "• "));
       try {
-        return originalRenderList.call(this, token, depth, width, styleContext);
+        if (!transcriptMarkdownActive()) {
+          return originalRenderList.call(this, token, depth, width, styleContext);
+        }
+        return renderSpacedList(token, (singleItemList) =>
+          originalRenderList.call(this, singleItemList, depth, width, styleContext));
       } finally {
         this.theme.listBullet = originalListBullet;
       }
@@ -2636,6 +2638,37 @@ export default function prettyTui(pi: ExtensionAPI) {
         markdownPrototype.renderList = patch.originalRenderList;
       }
       if (patch) delete markdownPrototype[listPatchKey];
+    });
+  }
+
+  const inlineEmphasisPatchKey = Symbol.for("pretty-tui.inline-emphasis");
+  if (config.markdownEmphasis !== "native" && !markdownPrototype[inlineEmphasisPatchKey]) {
+    const originalRenderInlineTokens = markdownPrototype.renderInlineTokens;
+    const patchedRenderInlineTokens = function (
+      this: any,
+      tokens: InlineToken[],
+      styleContext?: InlineStyleContext,
+    ): string {
+      const theme = currentExtensionUi?.theme;
+      if (!transcriptMarkdownActive() || !assistantBodyMarkdown.has(this) || !theme?.fg) {
+        return originalRenderInlineTokens.call(this, tokens, styleContext);
+      }
+      return originalRenderInlineTokens.call(
+        this,
+        tokens,
+        themedInlineContext(tokens, styleContext ?? this.getDefaultInlineStyleContext(), theme),
+      );
+    };
+
+    markdownPrototype[inlineEmphasisPatchKey] = { originalRenderInlineTokens, patchedRenderInlineTokens };
+    markdownPrototype.renderInlineTokens = patchedRenderInlineTokens;
+
+    pi.on("session_shutdown", () => {
+      const patch = markdownPrototype[inlineEmphasisPatchKey];
+      if (patch?.patchedRenderInlineTokens === markdownPrototype.renderInlineTokens) {
+        markdownPrototype.renderInlineTokens = patch.originalRenderInlineTokens;
+      }
+      if (patch) delete markdownPrototype[inlineEmphasisPatchKey];
     });
   }
 
