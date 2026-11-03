@@ -89,6 +89,24 @@ const loadConfig = (path: string): PrettyTuiConfig => {
   }
 };
 
+/** Stable text affixes around opaque IDs, without fuzzy similarity chaining. */
+const errorAffixKey = (text: string): string => {
+  const parts: (string | ["hex" | "uuid"])[] = [];
+  let cursor = 0;
+  // Whole tokens only: keep semantic identifiers such as msg_<hex> and
+  // rs_<hex>, short codes, ordinary words, and numeric quantities exact.
+  const opaqueId = /(?<![\w-])(?:[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}|[\da-f]{16,128})(?![\w-])/giu;
+  for (const match of text.matchAll(opaqueId)) {
+    const kind = match[0].includes("-") ? "uuid" : "hex";
+    if (kind === "hex" && !/[a-f]/iu.test(match[0])) continue;
+    parts.push(text.slice(cursor, match.index), [kind]);
+    cursor = match.index + match[0].length;
+  }
+  parts.push(text.slice(cursor));
+  // Typed slots cannot collide with a literal placeholder in an error.
+  return JSON.stringify(parts);
+};
+
 /** Polished user messages, tool calls, and list rendering for Pi's TUI. */
 export default function prettyTui(pi: ExtensionAPI) {
   const cwd = process.cwd();
@@ -124,15 +142,21 @@ export default function prettyTui(pi: ExtensionAPI) {
     const children: any[] = errorChatContainer?.children ?? [];
     const index = children.indexOf(component);
     const descriptor = errorDescriptor(component);
+    const key = descriptor && errorAffixKey(descriptor.content);
     const same = (other: any) => {
       const value = errorDescriptor(other);
       return descriptor && value && value.source === descriptor.source &&
-        value.title === descriptor.title && value.content === descriptor.content;
+        value.title === descriptor.title && errorAffixKey(value.content) === key;
     };
     if (index < 0 || !descriptor) return { hidden: false, count: 1, compact: false };
+    // Only the visible run head needs a count; hidden retries must not rescan
+    // the whole suffix and repeatedly fingerprint every later error.
+    const hidden = index > 0 && Boolean(same(children[index - 1]));
     let count = 1;
-    while (index + count < children.length && same(children[index + count])) count++;
-    return { hidden: index > 0 && Boolean(same(children[index - 1])), count,
+    if (!hidden) {
+      while (index + count < children.length && same(children[index + count])) count++;
+    }
+    return { hidden, count,
       compact: index > 0 && Boolean(errorDescriptor(children[index - 1])) };
   };
   const runningColor = (theme: any, text: string): string =>
