@@ -1786,6 +1786,123 @@ for (const name of ["find", "grep"]) {
   assert.match(plain(), /fetch failed ×3/);
 }
 
+// AgentRouter retries differ only in their trace annotation. Compare that
+// metadata without hiding a changed failure or modifying any original text.
+{
+  const commandContext = { hasUI: true, ui: { notify() {} } };
+  const traceIds = [
+    "b8f69459365f45067c8e3844d7fe2faa",
+    "df0bc2e6508c8c9528cb836a1ec57c1e",
+    "2033eda71a0610fb6092708efe69a66b",
+    "a3096f2b17e60fe3f51445b828e7fb20",
+    "d9f00dff124f11ac5c742901cc2bbb48",
+  ];
+  const errorText = (traceId) => `AgentRouter API error (400): {"message":"Item 'msg_065583769ed9f83d006ae8c53486ec8190b66cb8fbf3b9f51d' of type 'message' was provided without its required 'reasoning' item: 'rs_065583769ed9f83d006ae8c52e20c881908d1691013d5891d7'. [trace_id=${traceId}]","type":"invalid_request_error","param":"","code":null}`;
+  const errors = traceIds.map(errorText);
+  const message = (errorMessage, index, content = []) => ({
+    role: "assistant", timestamp: `trace-retry-${index}`, stopReason: "error", errorMessage, content,
+  });
+  for (const mode of ["clean", "compact"]) {
+    await commands.get("pretty-tui").handler(mode, commandContext);
+    await emit("session_start", {}, sessionContext([]));
+    const children = [];
+    const host = {
+      ui: { requestRender() {} },
+      chatContainer: { children, addChild(component) { children.push(component); } },
+    };
+    const show = (text) => InteractiveMode.prototype.showError.call(host, text);
+    const plain = (width = 500) => children.flatMap((component) => component.render(width)).map(stripTerminalSequences).join("\n");
+    // Bind the real runtime path to this transcript, then test notifications.
+    for (const error of errors) show("Error\n" + error);
+    assert.equal((plain().match(/✕ Error/g) ?? []).length, 1, `${mode}: trace-only runtime retries must fold`);
+    assert.match(plain(), /×5/);
+    assert.ok(plain().includes(errors[0]), "the representative must retain its complete original trace and text");
+    assert.equal(children.length, 5);
+
+    // Affix matching is provider/field-name agnostic and supports multiple
+    // changing opaque IDs, not just one hard-coded trace_id replacement.
+    for (const [first, second] of [
+      ["Gateway failed [request_id=0123456789abcdef]", "Gateway failed [request_id=fedcba987654321001234567]"],
+      ["Service timeout; correlation=550e8400-e29b-41d4-a716-446655440000; retry later",
+        "Service timeout; correlation=123e4567-e89b-12d3-a456-426614174000; retry later"],
+      ['Provider rejected {"trace":"0123456789abcdef","request":"abcdef0123456789"}',
+        'Provider rejected {"trace":"fedcba9876543210","request":"9876543210abcdef"}'],
+    ]) {
+      children.length = 0;
+      show("Error\n" + first);
+      show("Error\n" + second);
+      assert.equal((plain().match(/✕ Error/g) ?? []).length, 1, `${mode}: opaque-ID affixes must fold`);
+      assert.match(plain(), /×2/);
+      assert.ok(plain().includes(first));
+    }
+    for (const [first, second] of [
+      ["Exceeded quota 1234567890123456", "Exceeded quota 1234567890123457"],
+      ["Expected revision abcdef12", "Expected revision abcdef13"],
+      ["Failure abcdef0123456789", "Failure <hex>"],
+    ]) {
+      children.length = 0;
+      show("Error\n" + first);
+      show("Error\n" + second);
+      assert.equal((plain().match(/✕ Error/g) ?? []).length, 2, `${mode}: literal content is not an opaque ID`);
+    }
+
+    const messages = errors.map((error, index) => message(error, index));
+    const before = JSON.stringify(messages);
+    const restore = () => children.splice(0, children.length, ...messages.map((value) => new AssistantMessageComponent(value)));
+    restore();
+    assert.deepEqual(children[4].render(500), [], "folding must not depend on render order");
+    assert.equal((plain().match(/✕ Error/g) ?? []).length, 1, `${mode}: trace-only assistant retries must fold`);
+    assert.match(plain(), /×5/);
+    const narrow = children[0].render(30).map(stripTerminalSequences);
+    assert.ok(narrow.every((line) => visibleWidth(line) <= 30));
+    assert.match(narrow.join("\n"), /×5/);
+    assert.equal(JSON.stringify(messages), before);
+    // Full mode is the escape hatch for every individual trace ID.
+    await commands.get("pretty-tui").handler("full", commandContext);
+    for (const traceId of traceIds) assert.ok(plain().includes(traceId));
+    assert.ok(!plain().includes("×5"));
+    await commands.get("pretty-tui").handler(mode, commandContext);
+    restore();
+    assert.match(plain(), /×5/, "reconstructed history must fold identically");
+    assert.equal(JSON.stringify(messages), before);
+
+    for (const [label, changed] of [
+      ["message identity", errors[1].replace("msg_065583", "msg_165583")],
+      ["reasoning identity", errors[1].replace("rs_065583", "rs_165583")],
+      ["HTTP status", errors[1].replace("(400)", "(500)")],
+      ["reason", errors[1].replace("was provided without", "was rejected with")],
+      ["error type", errors[1].replace("invalid_request_error", "server_error")],
+      ["code", errors[1].replace('"code":null', '"code":"different"')],
+      ["missing trace", errors[1].replace(` [trace_id=${traceIds[1]}]`, "")],
+      ["unknown annotation", errors[1].replace("trace_id=", "request_id=")],
+      ["malformed trace", errorText("not-a-trace")],
+      ["trailing detail", errors[1] + "\nA different failure detail"],
+    ]) {
+      children.splice(0, children.length,
+        new AssistantMessageComponent(message(errors[0], 0)),
+        new AssistantMessageComponent(message(changed, 1)));
+      assert.equal((plain().match(/✕ Error/g) ?? []).length, 2, `${mode}: ${label} must break the run`);
+      assert.ok(!plain().includes("×2"));
+    }
+    restore();
+    children.splice(2, 0, new Text("A transcript boundary", 0, 0));
+    assert.match(plain(), /×2/);
+    assert.match(plain(), /×3/);
+    assert.ok(!plain().includes("×5"));
+    // A runtime notification with the same body cannot join assistant errors.
+    show("Error\n" + errors[0]);
+    assert.ok(children.at(-1).render(500).length > 0);
+    show("Different title\n" + errors[1]);
+    assert.ok(children.at(-1).render(500).length > 0);
+    children.splice(0, children.length,
+      new AssistantMessageComponent(message(errors[0], 0)),
+      new AssistantMessageComponent(message(errors[1], 1, [{ type: "text", text: "Partial answer" }])));
+    assert.equal((plain().match(/✕ Error/g) ?? []).length, 2);
+    assert.ok(plain().includes("Partial answer"));
+  }
+  await commands.get("pretty-tui").handler("clean", commandContext);
+}
+
 // Regression: while the current group holds only a thought, a notification and
 // a renderer-less custom message still join that group. Both used to fall into
 // the tool-only refusal branch, which threw inside ctx.ui.notify and left the

@@ -38,6 +38,12 @@ Click activity rows, tool titles or thought entries to expand and collapse detai
 
 Settings persist across sessions. Disabling the extension restores Pi's native appearance.
 
+### Repeated errors
+
+In clean and compact, adjacent standalone errors can share the first complete error and a `×2` / `×3` count even when trace, request or correlation IDs change. Source type, title and surrounding text must match exactly; only standalone hexadecimal IDs (16–128 characters containing a letter) or UUIDs may differ. Short codes, numeric quantities and prefixed IDs such as `msg_...` / `rs_...` remain exact.
+
+Other transcript entries break the run; errors with thoughts, tool calls or visible answer text are not folded. Session records remain unchanged. Use `/pretty-tui full` to see every occurrence and its original IDs.
+
 ## Copying
 
 Start Pi in **fullscreen mode** to use mouse controls:
