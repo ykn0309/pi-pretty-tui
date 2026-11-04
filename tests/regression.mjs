@@ -1732,8 +1732,51 @@ for (const name of ["find", "grep"]) {
     const terminalText = terminalComponent.render(80).join("\n")
       .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
     assert.ok(terminalText.includes(fixture.expected));
-    assert.ok(terminalText.includes(fixture.errorMessage || "Response was truncated before completion."));
+    assert.ok(terminalText.replace(/\s+/g, " ").includes(fixture.errorMessage || "Response was truncated before completion."));
   }
+}
+
+// Clean/compact standalone warnings and errors share inline alert layout, but warning
+// repetitions stay separate. Equal title/body text is painted only once.
+{
+  const commandContext = { hasUI: true, ui: { notify() {} } };
+  for (const mode of ["clean", "compact"]) {
+    await commands.get("pretty-tui").handler(mode, commandContext);
+    await emit("session_start", {}, sessionContext([]));
+    const children = [];
+    const host = { ui: { requestRender() {} }, chatContainer: {
+      children, addChild(component) { children.push(component); },
+    } };
+    const showWarning = text => InteractiveMode.prototype.showWarning.call(host, text);
+    const render = (component, width = 160) => component.render(width).map(stripTerminalSequences);
+    showWarning("Operation aborted\nOperation aborted");
+    assert.equal(render(children.at(-1)).join("\n").trim(), "⚠ Operation aborted");
+    showWarning("Warning title\nAdditional explanation");
+    assert.equal(render(children.at(-1)).join("\n").trim(), "⚠ Warning title · Additional explanation");
+    showWarning("Warning title\nAdditional explanation");
+    assert.ok(children.at(-1).render(160).length > 0, "warnings do not fold");
+    assert.ok(!render(children.at(-1)).join("\n").includes("[×"));
+    const detail = "Full warning detail ".repeat(15) + "COMPLETE_WARNING_TAIL";
+    showWarning(`Long warning\n${detail}`);
+    for (const width of [12, 30, 80]) {
+      const rows = render(children.at(-1), width);
+      assert.ok(rows.every(row => visibleWidth(row) <= width));
+      assert.ok(!rows.join("\n").includes("…"));
+      assert.ok(rows.map(row => row.trim()).join("").includes("COMPLETE_WARNING_TAIL"));
+      assert.ok(!rows.join("\n").match(/[└│]/));
+    }
+    InteractiveMode.prototype.showError.call(host, "Same error\nSame error");
+    assert.equal(render(children.at(-1)).join("\n").trim(), "✕ Same error");
+    if (mode !== "full") {
+      const message = { role: "assistant", timestamp: `warning-duplicate-${mode}`,
+        content: [], stopReason: "aborted", errorMessage: "Operation aborted" };
+      const before = JSON.stringify(message);
+      const component = new AssistantMessageComponent(message);
+      assert.equal(render(component).join("\n").trim(), "⚠ Operation aborted");
+      assert.equal(JSON.stringify(message), before);
+    }
+  }
+  await commands.get("pretty-tui").handler("clean", commandContext);
 }
 
 // Repeated pure assistant failures and Pi's final retry failure remain five

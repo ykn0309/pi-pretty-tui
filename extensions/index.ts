@@ -642,7 +642,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     );
   };
 
-  const renderStandaloneError = (member: ActivityMember, width: number, component?: any): string[] => {
+  const renderStandaloneAlert = (member: ActivityMember, width: number, component?: any): string[] => {
     const run = component && renderMode !== "full" ? errorRun(component) : { hidden: false, count: 1, compact: false };
     if (component) errorDisclosureRows.delete(component);
     if (run.hidden) return [];
@@ -651,7 +651,8 @@ export default function prettyTui(pi: ExtensionAPI) {
     const original = component ? errorDescriptor(component) : undefined;
     const renderError = (titleText: string, contentText: string, count = 1): string[] => {
       const title = stripTerminalSequences(titleText);
-      const content = stripTerminalSequences(contentText);
+      const detail = stripTerminalSequences(contentText);
+      const content = detail.trim() === title.trim() ? "" : detail;
       const heading = style.icon + style.title(title);
       const prefix = heading + (content ? theme.fg("dim", " · ") : "");
       const text = prefix + theme.fg("muted", content) + (count > 1 ? theme.fg("dim", component && expandedErrorRuns.has(component) ? " [Collapse]" : ` [×${count}]`) : "");
@@ -686,8 +687,8 @@ export default function prettyTui(pi: ExtensionAPI) {
   };
 
   const renderPendingActivityUpdate = (member: ActivityMember, width: number, component?: any): string[] => {
-    if (member.updateSeverity === "error" && member.updateTitle !== "Response truncated") {
-      return renderStandaloneError(member, width, component);
+    if (member.updateSeverity === "error" || member.updateSeverity === "warning") {
+      return renderStandaloneAlert(member, width, component);
     }
     const theme = defaultActivityTheme();
     const title = truncateToWidth(member.updateTitle ?? "Update", Math.max(1, width - 2), "…");
