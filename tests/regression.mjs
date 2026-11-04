@@ -227,7 +227,7 @@ const renderCollapsedSummaries = async (entries) => {
 };
 const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool/.exec(output)?.[1]));
 
-// Built-in compact call parameters share the muted role with nested calls.
+// Expanded clean input parameters use the brighter text role without spacers.
 {
   const colors = [];
   const parameterTheme = { ...theme, fg(color, text) { colors.push([text, color]); return text; } };
@@ -240,15 +240,22 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
     ["find", { pattern: "COLOR_PARAMETER" }],
     ["ls", { path: "COLOR_PARAMETER" }],
   ];
-  for (const [name, args] of fixtures) {
-    colors.length = 0;
-    const component = tools.get(name).renderCall(args, parameterTheme, {
-      toolCallId: `parameter-color-${name}`, expanded: true, executionStarted: true, state: {},
-    });
-    component.render(100);
-    assert.ok(colors.some(([text, color]) => text.includes("COLOR_PARAMETER") && color === "muted"), name);
-    assert.ok(!colors.some(([text, color]) => text.includes("COLOR_PARAMETER") && color === "text"), name);
+  const commandContext = { hasUI: true, ui: { notify() {} } };
+  for (const mode of ["clean"]) {
+    await commands.get("pretty-tui").handler(mode, commandContext);
+    for (const [name, args] of fixtures) {
+      colors.length = 0;
+      const component = tools.get(name).renderCall(args, parameterTheme, {
+        toolCallId: `parameter-color-${name}`, expanded: true, executionStarted: true, state: {},
+      });
+      const rows = component.render(100);
+      const expected = mode === "clean" ? "text" : "muted";
+      assert.ok(colors.some(([text, color]) => text.includes("COLOR_PARAMETER") && color === expected), `${mode}/${name}`);
+      assert.ok(!colors.some(([text, color]) => text.includes("COLOR_PARAMETER") && color === (expected === "text" ? "muted" : "text")), `${mode}/${name}`);
+      assert.ok(rows.every(row => stripTerminalSequences(row).trim().length > 0), "no blank call rows");
+    }
   }
+  await commands.get("pretty-tui").handler("clean", commandContext);
 }
 
 // Read range labels normalize numeric strings without changing execution args.

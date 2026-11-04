@@ -2848,7 +2848,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     content: renderMode === "compact" ? theme.fg("muted", detail) :
       theme.fg("text", theme.bold(name)) +
       theme.fg("dim", "(") +
-      theme.fg("muted", detail) +
+      theme.fg(renderMode === "clean" && expanded ? "text" : "muted", detail) +
       theme.fg("dim", ")"),
   });
 
