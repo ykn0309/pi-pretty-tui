@@ -1737,7 +1737,7 @@ for (const name of ["find", "grep"]) {
 }
 
 // Clean/compact standalone warnings and errors share inline alert layout, but warning
-// repetitions stay separate. Equal title/body text is painted only once.
+// repetitions stay separate. Equal title/body text is preserved in both roles.
 {
   const commandContext = { hasUI: true, ui: { notify() {} } };
   for (const mode of ["clean", "compact"]) {
@@ -1750,7 +1750,7 @@ for (const name of ["find", "grep"]) {
     const showWarning = text => InteractiveMode.prototype.showWarning.call(host, text);
     const render = (component, width = 160) => component.render(width).map(stripTerminalSequences);
     showWarning("Operation aborted\nOperation aborted");
-    assert.equal(render(children.at(-1)).join("\n").trim(), "⚠ Operation aborted");
+    assert.equal(render(children.at(-1)).join("\n").trim(), "⚠ Operation aborted · Operation aborted");
     showWarning("Warning title\nAdditional explanation");
     assert.equal(render(children.at(-1)).join("\n").trim(), "⚠ Warning title · Additional explanation");
     showWarning("Warning title\nAdditional explanation");
@@ -1766,13 +1766,13 @@ for (const name of ["find", "grep"]) {
       assert.ok(!rows.join("\n").match(/[└│]/));
     }
     InteractiveMode.prototype.showError.call(host, "Same error\nSame error");
-    assert.equal(render(children.at(-1)).join("\n").trim(), "✕ Same error");
+    assert.equal(render(children.at(-1)).join("\n").trim(), "✕ Same error · Same error");
     if (mode !== "full") {
       const message = { role: "assistant", timestamp: `warning-duplicate-${mode}`,
         content: [], stopReason: "aborted", errorMessage: "Operation aborted" };
       const before = JSON.stringify(message);
       const component = new AssistantMessageComponent(message);
-      assert.equal(render(component).join("\n").trim(), "⚠ Operation aborted");
+      assert.equal(render(component).join("\n").trim(), "⚠ Operation aborted · Operation aborted");
       assert.equal(JSON.stringify(message), before);
     }
   }

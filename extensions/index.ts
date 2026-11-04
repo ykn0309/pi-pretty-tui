@@ -651,8 +651,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     const original = component ? errorDescriptor(component) : undefined;
     const renderError = (titleText: string, contentText: string, count = 1): string[] => {
       const title = stripTerminalSequences(titleText);
-      const detail = stripTerminalSequences(contentText);
-      const content = detail.trim() === title.trim() ? "" : detail;
+      const content = stripTerminalSequences(contentText);
       const heading = style.icon + style.title(title);
       const prefix = heading + (content ? theme.fg("dim", " · ") : "");
       const text = prefix + theme.fg("muted", content) + (count > 1 ? theme.fg("dim", component && expandedErrorRuns.has(component) ? " [Collapse]" : ` [×${count}]`) : "");
