@@ -196,14 +196,14 @@ export default function prettyTui(pi: ExtensionAPI) {
   let latestActivityStatusGeneration = 0;
   const renderLatestActivityStatus = (status: LatestActivityStatus, width: number, theme: any): string => {
     const severity = status.severity ?? "status";
-    const icon = severity === "error" ? "✕" : severity === "success" ? "✓" : "◇";
+    const icon = severity === "error" ? "✕ " : severity === "success" ? "✓ " : "";
     const color = severity === "error"
       ? "error"
       : severity === "success"
         ? "success"
         : "dim";
     const detail = status.detail?.trim() ? ` — ${status.detail.trim()}` : "";
-    return truncateToWidth(` ${theme.fg(color, `${icon} ${status.title}`)}${theme.fg("dim", detail)}`, Math.max(1, width), "…");
+    return truncateToWidth(` ${theme.fg(color, `${icon}${status.title}`)}${theme.fg("dim", detail)}`, Math.max(1, width), "…");
   };
   const refreshLatestActivityWidget = () => {
     if (!currentExtensionUi?.setWidget) return;
