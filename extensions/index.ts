@@ -2797,6 +2797,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     prefix: DisplayValue;
     continuation?: DisplayValue;
     content: DisplayValue;
+    singleLine?: boolean;
   };
 
   /**
@@ -2810,6 +2811,11 @@ export default function prettyTui(pi: ExtensionAPI) {
       for (const row of rows) {
         const prefix = typeof row.prefix === "function" ? row.prefix() : row.prefix;
         const content = typeof row.content === "function" ? row.content() : row.content;
+        if (row.singleLine) {
+          const inline = content.replace(/\r\n|\r|\n/g, " ");
+          rendered.push(truncateToWidth(prefix + inline, Math.max(1, width), "…"));
+          continue;
+        }
         const rawContinuation = row.continuation ?? " ".repeat(visibleWidth(prefix));
         const continuation = typeof rawContinuation === "function" ? rawContinuation() : rawContinuation;
         const prefixWidth = Math.max(visibleWidth(prefix), visibleWidth(continuation));
@@ -2830,7 +2836,8 @@ export default function prettyTui(pi: ExtensionAPI) {
     context.state.compactToolStatus = status;
   };
 
-  const callRow = (theme: any, name: string, detail: string, state: any): DisplayRow => ({
+  const callRow = (theme: any, name: string, detail: string, state: any, expanded = false): DisplayRow => ({
+    singleLine: renderMode === "clean" && !expanded,
     prefix: () => {
       const status = (state.compactToolStatus ?? "running") as ToolStatus;
       const color = status === "success" ? "success" : status === "error" ? "error" : "dim";
@@ -2845,8 +2852,8 @@ export default function prettyTui(pi: ExtensionAPI) {
       theme.fg("dim", ")"),
   });
 
-  const call = (theme: any, name: string, detail: string, state: any) =>
-    block([callRow(theme, name, detail, state)]);
+  const call = (theme: any, name: string, detail: string, state: any, expanded = false) =>
+    block([callRow(theme, name, detail, state, expanded)]);
 
   const writeCall = (theme: any, name: string, path: string, content: string, expanded: boolean, state: any) => {
     const lines = content.replace(/\t/g, "    ").split("\n");
@@ -2856,7 +2863,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     const shown = lines.slice(0, expanded ? total : 10);
     const remaining = total - shown.length;
     const rows: DisplayRow[] = [
-      callRow(theme, name, `${path} · ${total} ${total === 1 ? "line" : "lines"}`, state),
+      callRow(theme, name, `${path} · ${total} ${total === 1 ? "line" : "lines"}`, state, expanded),
     ];
 
     for (let index = 0; index < shown.length; index++) {
@@ -4536,7 +4543,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     renderCall(args: any, theme: any, context: any) {
       if (hideCleanTool(context.toolCallId, context.expanded, context.executionStarted)) return cleanToolCall(theme, readLabel, context.toolCallId);
       const range = readLineRange(args.offset, args.limit);
-      return call(theme, readLabel, `${args.path}${range}`, context.state);
+      return call(theme, readLabel, `${args.path}${range}`, context.state, context.expanded);
     },
     renderResult(toolResult: any, options: any, theme: any, context: any) {
       const output = textContent(toolResult);
@@ -4572,9 +4579,9 @@ export default function prettyTui(pi: ExtensionAPI) {
         const detail = omitted > 0
           ? `${firstLine} … (${omitted} more ${omitted === 1 ? "line" : "lines"})`
           : firstLine;
-        return call(theme, bashLabel, detail, context.state);
+        return call(theme, bashLabel, detail, context.state, context.expanded);
       }
-      return call(theme, bashLabel, command, context.state);
+      return call(theme, bashLabel, command, context.state, context.expanded);
     },
     renderResult(toolResult: any, options: any, theme: any, context: any) {
       const output = textContent(toolResult);
@@ -4616,7 +4623,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     renderCall(args: any, theme: any, context: any) {
       if (hideCleanTool(context.toolCallId, context.expanded, context.executionStarted)) return cleanToolCall(theme, editLabel, context.toolCallId);
       const count = Array.isArray(args.edits) ? ` · ${args.edits.length} changes` : "";
-      return call(theme, editLabel, `${args.path}${count}`, context.state);
+      return call(theme, editLabel, `${args.path}${count}`, context.state, context.expanded);
     },
     renderResult(toolResult: any, options: any, theme: any, context: any) {
       const output = textContent(toolResult);
@@ -4664,7 +4671,7 @@ export default function prettyTui(pi: ExtensionAPI) {
         const lines = content.replace(/\t/g, "    ").split("\n");
         while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
         const total = lines.length;
-        return call(theme, writeLabel, `${path} · ${total} ${total === 1 ? "line" : "lines"}`, context.state);
+        return call(theme, writeLabel, `${path} · ${total} ${total === 1 ? "line" : "lines"}`, context.state, context.expanded);
       }
       return writeCall(theme, writeLabel, path, content, context.expanded, context.state);
     },
@@ -4692,7 +4699,7 @@ export default function prettyTui(pi: ExtensionAPI) {
       if (hideCleanTool(context.toolCallId, context.expanded, context.executionStarted)) return cleanToolCall(theme, grepLabel, context.toolCallId);
       const where = args.path ? ` · ${args.path}` : "";
       const glob = args.glob ? ` · ${args.glob}` : "";
-      return call(theme, grepLabel, `${args.pattern}${where}${glob}`, context.state);
+      return call(theme, grepLabel, `${args.pattern}${where}${glob}`, context.state, context.expanded);
     },
     renderResult(toolResult: any, options: any, theme: any, context: any) {
       const output = textContent(toolResult);
@@ -4711,7 +4718,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     renderShell: "self",
     renderCall(args: any, theme: any, context: any) {
       if (hideCleanTool(context.toolCallId, context.expanded, context.executionStarted)) return cleanToolCall(theme, findLabel, context.toolCallId);
-      return call(theme, findLabel, `${args.pattern}${args.path ? ` · ${args.path}` : ""}`, context.state);
+      return call(theme, findLabel, `${args.pattern}${args.path ? ` · ${args.path}` : ""}`, context.state, context.expanded);
     },
     renderResult(toolResult: any, options: any, theme: any, context: any) {
       const output = textContent(toolResult);
@@ -4730,7 +4737,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     renderShell: "self",
     renderCall(args: any, theme: any, context: any) {
       if (hideCleanTool(context.toolCallId, context.expanded, context.executionStarted)) return cleanToolCall(theme, lsLabel, context.toolCallId);
-      return call(theme, lsLabel, args.path ?? ".", context.state);
+      return call(theme, lsLabel, args.path ?? ".", context.state, context.expanded);
     },
     renderResult(toolResult: any, options: any, theme: any, context: any) {
       const output = textContent(toolResult);

@@ -1341,6 +1341,55 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
   assert.ok(!summaryOf(asFailure).includes("Done"), asFailure);
 }
 
+// Clean collapsed call headers occupy exactly one row; expansion retains
+// the complete arguments, including multiline commands and Unicode paths.
+{
+  const commandContext = { hasUI: true, ui: { notify() {} } };
+  await commands.get("pretty-tui").handler("clean", commandContext);
+  const long = "路径🙂/".repeat(30) + "CALL_TAIL";
+  const fixtures = [
+    ["read", { path: long }],
+    ["bash", { command: `echo ${long}\nprintf 'SECOND_COMMAND_LINE'` }],
+    ["edit", { path: long, oldText: "before", newText: "after" }],
+    ["write", { path: long, content: "hello" }],
+    ["grep", { pattern: long, path: long }],
+    ["find", { pattern: long, path: long }],
+    ["ls", { path: long }],
+  ];
+  for (const [name, args] of fixtures) {
+    await emit("session_start", {}, sessionContext([]));
+    await emit("agent_start");
+    const before = JSON.stringify(args);
+    const component = new ToolExecutionComponent(name, `single-line-${name}`, args, undefined,
+      tools.get(name), { requestRender() {} }, process.cwd());
+    component.markExecutionStarted();
+    component.updateResult({ content: [{ type: "text", text: "ok" }], isError: false });
+    const render = width => component.render(width).map(stripTerminalSequences);
+    component.render(70);
+    component.handleMouse({ type: "click", button: "left", x: 1, y: 1, width: 70 });
+    assert.equal(component.expanded, false);
+    for (const width of [25, 70, 120]) {
+      const rows = render(width);
+      const call = rows.findIndex(row => row.includes(`● ${name}(`));
+      assert.ok(call >= 0, `${name}: call title visible`);
+      assert.ok(rows[call].endsWith("…"), `${name}: long title uses ellipsis`);
+      assert.ok(!rows.join("\n").includes("CALL_TAIL"), `${name}: no wrapped call suffix`);
+      assert.ok(rows.every(row => visibleWidth(row) <= width));
+      assert.ok(rows.slice(call + 1).some(row => /Done|Read|Updated|Written|matches|files|entries|Found|Listed|ok/i.test(row)), `${name}: result summary remains`);
+    }
+    const rows = render(70);
+    const callY = rows.findIndex(row => row.includes(`● ${name}(`));
+    component.handleMouse({ type: "click", button: "left", x: 8, y: callY, width: 70 });
+    assert.equal(component.expanded, true, `${name}: title click expands`);
+    const expanded = render(70).join("\n");
+    assert.ok(expanded.includes("CALL_TAIL"), `${name}: complete call restored`);
+    if (name === "bash") assert.ok(expanded.includes("SECOND_COMMAND_LINE"));
+    assert.equal(JSON.stringify(args), before);
+    component.setExpanded(false);
+    assert.ok(!render(70).join("\n").includes("CALL_TAIL"), `${name}: collapse truncates again`);
+  }
+}
+
 // Third-party tools use their native renderer inside the same clean hierarchy,
 // and thinking is a compact sibling that can be expanded independently.
 {
