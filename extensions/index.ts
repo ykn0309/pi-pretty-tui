@@ -8,6 +8,7 @@ import {
   type InlineToken,
 } from "./markdown-emphasis.js";
 import { gapRowsAfterBlock, renderSpacedList } from "./markdown-spacing.js";
+import { editDiffLayout } from "./edit-diff.js";
 import { ThoughtPresentation } from "./thought-presentation.js";
 import { isThirdPartyTool, renderToolProjection, THIRD_PARTY_TOOL, toolLabel, type ToolProjection } from "./tool-presentation.js";
 import { NestedTools, NESTED_SNAPSHOT_ENTRY } from "./nested-tools.js";
@@ -2798,6 +2799,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     continuation?: DisplayValue;
     content: DisplayValue;
     singleLine?: boolean;
+    background?: (text: string) => string;
   };
 
   /**
@@ -2822,8 +2824,10 @@ export default function prettyTui(pi: ExtensionAPI) {
         const contentWidth = Math.max(1, width - prefixWidth);
         const wrapped = wrapTextWithAnsi(content || " ", contentWidth);
 
-        rendered.push(prefix + (wrapped[0] ?? ""));
-        for (const line of wrapped.slice(1)) rendered.push(continuation + line);
+        const paint = (line: string) => row.background
+          ? row.background(line + " ".repeat(Math.max(0, contentWidth - visibleWidth(line)))) : line;
+        rendered.push(prefix + paint(wrapped[0] ?? ""));
+        for (const line of wrapped.slice(1)) rendered.push(continuation + paint(line));
       }
 
       return rendered;
@@ -2886,28 +2890,6 @@ export default function prettyTui(pi: ExtensionAPI) {
     return block(rows);
   };
 
-  // Pi diffs encode the marker before the padded line number. Move it into
-  // its own column and keep the whole gutter out of content word wrapping.
-  const editDiffLayout = (theme: any, diff: string): ((line: string) => DisplayRow) => {
-    const parse = (line: string) => /^([ +\-]) *(\d+) (.*)$/.exec(line);
-    const numberWidth = diff.split("\n").reduce((width, line) => Math.max(width, parse(line)?.[2].length ?? 0), 1);
-    const gutterWidth = numberWidth + 3;
-    return (line) => {
-      const match = parse(line);
-      const marker = match?.[1] ?? (
-        line.startsWith("+") && !line.startsWith("+++") ? "+" :
-        line.startsWith("-") && !line.startsWith("---") ? "-" : " "
-      );
-      const color = marker === "+" ? "toolDiffAdded" : marker === "-" ? "toolDiffRemoved" : "toolDiffContext";
-      const gutter = match ? `${match[2].padStart(numberWidth)} ${marker} ` : " ".repeat(gutterWidth);
-      return {
-        prefix: theme.fg(color, gutter),
-        continuation: " ".repeat(gutterWidth),
-        content: theme.fg(color, match ? match[3] : /^\s+\.\.\.$/.test(line) ? "..." : line),
-      };
-    };
-  };
-
   const result = (
     theme: any,
     summary: string,
@@ -2936,6 +2918,7 @@ export default function prettyTui(pi: ExtensionAPI) {
           prefix: theme.fg("dim", isLast ? "   └ " : "   │ ") + (layout?.prefix ?? ""),
           continuation: (isLast ? "     " : theme.fg("dim", "   │ ")) + (layout?.continuation ?? ""),
           content: layout?.content ?? outputStyle(shown[index] || " "),
+          background: layout?.background,
         });
       }
       if (omitted > 0) {
@@ -4653,7 +4636,7 @@ export default function prettyTui(pi: ExtensionAPI) {
           if (line.startsWith("-") && !line.startsWith("---")) return theme.fg("toolDiffRemoved", line);
           return theme.fg("toolDiffContext", line);
         },
-        !failed && diff ? editDiffLayout(theme, diff) : undefined,
+        !failed && diff ? editDiffLayout(theme, diff, context.args?.path) : undefined,
       );
     },
   } as any);

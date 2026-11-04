@@ -258,6 +258,40 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
   await commands.get("pretty-tui").handler("clean", commandContext);
 }
 
+// Edit diffs retain syntax foregrounds, theme backgrounds and grapheme-level
+// change emphasis. Both old/new snippets are highlighted independently.
+{
+  const { editDiffLayout } = await jiti.import(join(process.cwd(), "extensions/edit-diff.ts"));
+  for (const appearance of ["dark", "light"]) {
+    initTheme(appearance, false);
+    const marked = [], backgrounds = [];
+    const diffTheme = {
+      fg: (_role, text) => text,
+      bold: text => text,
+      underline: text => { marked.push(stripTerminalSequences(text)); return `\x1b[4m${text}\x1b[24m`; },
+      bg: (role, text) => { backgrounds.push(role); return `\x1b[48;5;22m${text}\x1b[49m`; },
+    };
+    const diff = ' 1 const unchanged = true;\n-2 const value = "旧🙂";\n+2 const value = "新🙃";\n 3 console.log(value);';
+    const layout = editDiffLayout(diffTheme, diff, "example.ts");
+    const rows = diff.split("\n").map(layout);
+    assert.ok(rows[1].background && rows[2].background);
+    assert.equal(rows[0].background, undefined);
+    assert.ok(backgrounds.includes("toolErrorBg") && backgrounds.includes("toolSuccessBg"));
+    assert.deepEqual(marked, ["旧🙂", "新🙃"]);
+    assert.ok(rows.every(row => /\x1b\[[\d;]*m/.test(row.content)), `${appearance}: syntax ANSI retained`);
+    assert.equal(stripTerminalSequences(rows[1].content), 'const value = "旧🙂";');
+    assert.equal(stripTerminalSequences(rows[2].content), 'const value = "新🙃";');
+    marked.length = 0;
+    const combining = '-1 const s = "é";\n+1 const s = "ö";';
+    const combiningLayout = editDiffLayout(diffTheme, combining, "example.ts");
+    combining.split("\n").forEach(combiningLayout);
+    assert.deepEqual(marked, ["é", "ö"], "do not split combining graphemes");
+    const unknown = editDiffLayout(diffTheme, '+1 arbitrary text', "no-extension");
+    assert.equal(stripTerminalSequences(unknown('+1 arbitrary text').content), 'arbitrary text');
+  }
+  initTheme("dark", false);
+}
+
 // Read range labels normalize numeric strings without changing execution args.
 // Null means an omitted optional field; malformed ranges must not be invented.
 {
@@ -329,9 +363,9 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
     assert.ok(rows.some((line) => /^   │ {7}old/.test(line)), "wrapped code starts after the gutter");
     assert.ok(rows.filter((line) => line.includes("...")).every((line) => line.indexOf("...") === 11));
     assert.ok(rows.some((line) => line.includes("101")), "blank source lines keep their number");
-    assert.ok(colors.some(([color, text]) => color === "toolDiffAdded" && text.startsWith("  ADD")));
-    assert.ok(colors.some(([color, text]) => color === "toolDiffRemoved" && text.startsWith("  DELETE")));
-    assert.ok(colors.some(([color, text]) => color === "toolDiffContext" && text === "CONTEXT"));
+    assert.ok(colors.some(([color, text]) => color === "toolDiffAdded" && text.includes("+")));
+    assert.ok(colors.some(([color, text]) => color === "toolDiffRemoved" && text.includes("-")));
+    assert.ok(colors.some(([color, text]) => color === "toolDiffContext" && text.includes("9")));
     assert.ok(rows[0].includes("Updated · +1 -1"));
   }
   assert.ok(!renderEdit(80, false).rows.join("\n").includes("DELETE"));
