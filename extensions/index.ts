@@ -4686,8 +4686,8 @@ export default function prettyTui(pi: ExtensionAPI) {
           const digits = String(source.length).length;
           for (let index = 0; index < source.length; index++) {
             rows.push({
-              prefix: theme.fg("dim", "   │ ") + theme.fg("dim", `${String(index + 1).padStart(digits)} `),
-              continuation: theme.fg("dim", "   │ ") + " ".repeat(digits + 1),
+              prefix: theme.fg("dim", index === source.length - 1 ? "   └ " : "   │ ") + theme.fg("dim", `${String(index + 1).padStart(digits)} `),
+              continuation: (index === source.length - 1 ? "     " : theme.fg("dim", "   │ ")) + " ".repeat(digits + 1),
               content: highlighted[index] ?? source[index],
             });
           }
