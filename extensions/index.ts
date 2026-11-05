@@ -45,6 +45,7 @@ import {
   type Component,
   Markdown,
   stripTerminalSequences,
+  sliceByColumn,
   truncateToWidth,
   TuiAltScreen,
   type TuiMouseEvent,
@@ -2830,8 +2831,22 @@ export default function prettyTui(pi: ExtensionAPI) {
 
         const paint = (line: string) => row.background
           ? row.background(line + " ".repeat(Math.max(0, contentWidth - visibleWidth(line)))) : line;
-        rendered.push(prefix + paint(wrapped[0] ?? ""));
-        for (const line of wrapped.slice(1)) rendered.push(continuation + paint(line));
+        const corner = renderMode === "clean" ? stripTerminalSequences(prefix).indexOf("└") : -1;
+        if (corner >= 0 && wrapped.length > 1) {
+          // Close the branch on the final physical row, not the first row of
+          // a logical source line that may wrap or contain explicit newlines.
+          const column = visibleWidth(stripTerminalSequences(prefix).slice(0, corner));
+          const guide = (symbol: string) => sliceByColumn(continuation, 0, column) +
+            defaultActivityTheme().fg("dim", symbol) +
+            sliceByColumn(continuation, column + 1, Math.max(0, visibleWidth(continuation) - column - 1));
+          rendered.push(prefix.replace("└", "│") + paint(wrapped[0] ?? ""));
+          for (let index = 1; index < wrapped.length; index++) {
+            rendered.push(guide(index === wrapped.length - 1 ? "└" : "│") + paint(wrapped[index]));
+          }
+        } else {
+          rendered.push(prefix + paint(wrapped[0] ?? ""));
+          for (const line of wrapped.slice(1)) rendered.push(continuation + paint(line));
+        }
       }
 
       return rendered;
@@ -2852,7 +2867,8 @@ export default function prettyTui(pi: ExtensionAPI) {
       if (renderMode === "compact") return name === "bash" ? theme.fg("toolTitle", "$ ") : "";
       return theme.fg(color, "● ");
     },
-    continuation: renderMode === "compact" && name !== "bash" ? "" : "  ",
+    continuation: renderMode === "clean" && expanded ? theme.fg("dim", "│ ") :
+      renderMode === "compact" && name !== "bash" ? "" : "  ",
     content: renderMode === "compact" ? theme.fg("muted", detail) :
       theme.fg("text", theme.bold(name)) +
       theme.fg("dim", "(") +

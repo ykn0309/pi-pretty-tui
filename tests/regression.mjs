@@ -1422,12 +1422,24 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
     const rows = result(true).render(width).map(stripTerminalSequences);
     assert.ok(rows.every(row => visibleWidth(row) <= width));
     assert.ok(rows.some(row => /^\s+│\s+1 const value/.test(row)));
-    const sourceRows = rows.slice(rows.findIndex(row => row.includes("│")));
+    const sourceRows = rows.slice(rows.findIndex(row => /^ {3}│\s+1 /.test(row)));
     assert.ok(sourceRows.slice(0, -1).every(row => /^ {3}│ /.test(row)), "source and wrapped continuations keep the vertical guide");
     assert.ok(/^ {3}└ /.test(sourceRows.at(-1)), "last source line closes the guide");
     assert.ok(rows.some(row => /^\s+└\s+45\s*$/.test(row)), "preserve trailing blank source line and show all content");
     assert.ok(!rows.join("\n").includes("more lines"));
   }
+  // A final long source line closes on the final visual row after wrapping.
+  const longContext = { ...context, args: { path: "long.ts", content: 'const text = "' + "长🙂value ".repeat(15) + '";' } };
+  const wrappedSource = definition.renderResult(output, { expanded: true, isPartial: false }, theme, longContext)
+    .render(35).map(stripTerminalSequences);
+  const sourceStart = wrappedSource.findIndex(row => /^ {3}│\s+1 /.test(row));
+  assert.ok(sourceStart >= 0);
+  assert.ok(wrappedSource.slice(sourceStart, -1).every(row => /^ {3}│ /.test(row)));
+  assert.ok(/^ {3}└ /.test(wrappedSource.at(-1)), "corner belongs to final physical row");
+  const multilineCall = tools.get("bash").renderCall({ command: "echo " + "long ".repeat(30) + "\nprintf done" }, theme,
+    { ...context, expanded: true }).render(35).map(stripTerminalSequences);
+  assert.ok(multilineCall.length > 2);
+  assert.ok(multilineCall.slice(1).every(row => row.startsWith("│ ")), "soft wraps and explicit newlines retain the input guide");
   const raw = result(true).render(120).join("\n");
   assert.ok(/\x1b\[[\d;]*m/.test(raw), "write source retains syntax colors");
   const failure = result(true, true, false, { content: [{ type: "text", text: "Permission denied\nComplete failure detail" }] }).render(120).map(stripTerminalSequences).join("\n");
