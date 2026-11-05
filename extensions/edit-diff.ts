@@ -1,5 +1,5 @@
 import { getLanguageFromPath, highlightCode } from "@earendil-works/pi-coding-agent";
-import { sliceByColumn, visibleWidth } from "@earendil-works/pi-tui";
+import { mixColors, sliceByColumn, visibleWidth } from "@earendil-works/pi-tui";
 
 type Range = [number, number];
 type Row = { marker: string; number?: string; text: string; styled: string; changes: Range[] };
@@ -82,13 +82,16 @@ export function editDiffLayout(theme: any, diff: string, path?: string) {
     const color = row.marker === "+" ? "toolDiffAdded" : row.marker === "-" ? "toolDiffRemoved" : "toolDiffContext";
     const background = row.marker === "+" ? "toolSuccessBg" : row.marker === "-" ? "toolErrorBg" : undefined;
     const paint = (text: string) => background && theme.bg ? theme.bg(background, text) : text;
+    const changeBackground = background && theme.colors?.[background] && theme.colors?.[color]
+      ? mixColors(theme.colors[background], theme.colors[color], 0.3) : undefined;
     const width = visibleWidth(row.text);
     let content = "", cursor = 0;
     for (const [start, end] of row.changes) {
       content += sliceByColumn(row.styled, cursor, start - cursor);
       const changed = sliceByColumn(row.styled, start, end - start);
-      // Underline + bold preserve syntax foreground colors, unlike inverse.
-      content += theme.underline ? theme.underline(theme.bold(changed)) : theme.bold(changed);
+      // A stronger theme-derived background preserves syntax foregrounds and
+      // avoids adding font emphasis to the changed graphemes.
+      content += changeBackground && theme.style ? theme.style(changed, { bg: changeBackground }) : paint(changed);
       cursor = end;
     }
     content += sliceByColumn(row.styled, cursor, Math.max(0, width - cursor));

@@ -259,7 +259,7 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
 }
 
 // Edit diffs retain syntax foregrounds, theme backgrounds and grapheme-level
-// change emphasis. Both old/new snippets are highlighted independently.
+// stronger change backgrounds without bold or underline. Both old/new snippets are highlighted independently.
 {
   const { editDiffLayout } = await jiti.import(join(process.cwd(), "extensions/edit-diff.ts"));
   for (const appearance of ["dark", "light"]) {
@@ -267,8 +267,19 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
     const marked = [], backgrounds = [];
     const diffTheme = {
       fg: (_role, text) => text,
-      bold: text => text,
-      underline: text => { marked.push(stripTerminalSequences(text)); return `\x1b[4m${text}\x1b[24m`; },
+      colors: {
+        toolSuccessBg: { kind: "rgb", r: 20, g: 35, b: 20 },
+        toolErrorBg: { kind: "rgb", r: 35, g: 20, b: 20 },
+        toolDiffAdded: { kind: "rgb", r: 80, g: 180, b: 80 },
+        toolDiffRemoved: { kind: "rgb", r: 180, g: 80, b: 80 },
+      },
+      bold: () => { throw new Error("diff changes must not use bold"); },
+      underline: () => { throw new Error("diff changes must not use underline"); },
+      style: (text, options) => {
+        marked.push(stripTerminalSequences(text));
+        assert.ok(options.bg);
+        return `\x1b[48;5;28m${text}\x1b[49m`;
+      },
       bg: (role, text) => { backgrounds.push(role); return `\x1b[48;5;22m${text}\x1b[49m`; },
     };
     const diff = ' 1 const unchanged = true;\n-2 const value = "旧🙂";\n+2 const value = "新🙃";\n 3 console.log(value);';
