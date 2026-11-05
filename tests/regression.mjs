@@ -1421,8 +1421,9 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
   for (const width of [25, 80, 120]) {
     const rows = result(true).render(width).map(stripTerminalSequences);
     assert.ok(rows.every(row => visibleWidth(row) <= width));
-    assert.ok(rows.some(row => /^\s+1 const value/.test(row)));
-    assert.ok(rows.some(row => /^\s+45\s*$/.test(row)), "preserve trailing blank source line and show all content");
+    assert.ok(rows.some(row => /^\s+│\s+1 const value/.test(row)));
+    assert.ok(rows.slice(rows.findIndex(row => row.includes("│"))).every(row => /^ {3}│ /.test(row)), "source and wrapped continuations keep the vertical guide");
+    assert.ok(rows.some(row => /^\s+│\s+45\s*$/.test(row)), "preserve trailing blank source line and show all content");
     assert.ok(!rows.join("\n").includes("more lines"));
   }
   const raw = result(true).render(120).join("\n");
