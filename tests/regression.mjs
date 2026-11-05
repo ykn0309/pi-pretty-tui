@@ -2682,8 +2682,8 @@ for (const name of ["find", "grep"]) {
     component.handleMouse({ type: "click", button: "left", x: 4, y: 1, width: 80, height: done.length });
     pulseColors.length = 0;
     settled();
-    assert.ok(pulseColors.some(([text, color]) => text === "Done" && color === "success"));
-    assert.ok(pulseColors.some(([text, color]) => text === "● " && color === "success"));
+    assert.ok(pulseColors.some(([text, color]) => text === "Done" && color === "text"));
+    assert.ok(pulseColors.some(([text, color]) => text === "● " && color === "text"));
   } finally {
     Date.now = originalNow;
     await emit("session_start", {}, sessionContext([]));

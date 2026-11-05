@@ -3587,7 +3587,7 @@ export default function prettyTui(pi: ExtensionAPI) {
       const dimPhase = responseRunStartedAt !== undefined &&
         Math.floor(Math.max(0, Date.now() - responseRunStartedAt) / RUNNING_DOT_INTERVAL_MS) % 2 === 1;
       const color = currentActivity === "done"
-        ? collapsedDone ? "dim" : "success"
+        ? collapsedDone ? "dim" : "text"
         : dimPhase ? "dim" : "accent";
       return currentActivity !== "done" && !dimPhase
         ? runningColor(theme, "● ")
@@ -3598,7 +3598,7 @@ export default function prettyTui(pi: ExtensionAPI) {
       const currentActivity = typeof activity === "function" ? activity() : activity;
       const label = currentActivity === "done" ? "Done" : "Running";
       const color = label === "Done"
-        ? collapsedDone ? "dim" : "success"
+        ? collapsedDone ? "dim" : "text"
         : "accent";
       const detailColor = label === "Done" && collapsedDone ? "dim" : "text";
       const title = label === "Running"
