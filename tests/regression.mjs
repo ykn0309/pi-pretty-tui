@@ -1393,6 +1393,48 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
   assert.ok(!summaryOf(asFailure).includes("Done"), asFailure);
 }
 
+// Clean write displays source only as successful output, with numbered syntax
+// rows and a separate execution-status line. Other modes keep their layout.
+{
+  const commandContext = { hasUI: true, ui: { notify() {} } };
+  await commands.get("pretty-tui").handler("clean", commandContext);
+  await emit("session_start", {}, sessionContext([]));
+  const args = { path: "example.ts", content: 'const value = "你好🙂";\n\n' + 'console.log(value);\n'.repeat(42) + '\n' };
+  const before = JSON.stringify(args);
+  const context = { toolCallId: "write-output-layout", executionStarted: true, expanded: true, args, state: {} };
+  const definition = tools.get("write");
+  const owner = new ToolExecutionComponent("write", context.toolCallId, args, undefined, definition, { requestRender() {} }, process.cwd());
+  owner.markExecutionStarted();
+  owner.render(120);
+  owner.handleMouse({ type: "click", button: "left", x: 1, y: 1, width: 120 });
+  const call = definition.renderCall(args, theme, context).render(80).map(stripTerminalSequences);
+  assert.equal(call.length, 1);
+  assert.ok(call[0].includes("write(example.ts"));
+  assert.ok(!call.join("\n").includes("const value"));
+  const output = { content: [{ type: "text", text: "Successfully wrote 999 bytes to example.ts" }] };
+  const result = (expanded, isError = false, isPartial = false, payload = output) =>
+    definition.renderResult(payload, { expanded, isPartial }, theme, { ...context, expanded, isError });
+  const collapsed = result(false).render(120).map(stripTerminalSequences);
+  assert.equal(collapsed.length, 1);
+  assert.ok(collapsed[0].includes("Written · Successfully wrote 999 bytes to example.ts"));
+  assert.ok(!collapsed[0].includes("const value"));
+  for (const width of [25, 80, 120]) {
+    const rows = result(true).render(width).map(stripTerminalSequences);
+    assert.ok(rows.every(row => visibleWidth(row) <= width));
+    assert.ok(rows.some(row => /^\s+1 const value/.test(row)));
+    assert.ok(rows.some(row => /^\s+45\s*$/.test(row)), "preserve trailing blank source line and show all content");
+    assert.ok(!rows.join("\n").includes("more lines"));
+  }
+  const raw = result(true).render(120).join("\n");
+  assert.ok(/\x1b\[[\d;]*m/.test(raw), "write source retains syntax colors");
+  const failure = result(true, true, false, { content: [{ type: "text", text: "Permission denied\nComplete failure detail" }] }).render(120).map(stripTerminalSequences).join("\n");
+  assert.ok(failure.includes("Write failed") && failure.includes("Permission denied") && failure.includes("Complete failure detail"));
+  assert.ok(!failure.includes("const value") && !failure.includes("Written"));
+  const partial = result(true, false, true).render(120).map(stripTerminalSequences).join("\n");
+  assert.ok(partial.includes("Writing…") && !partial.includes("Written") && !partial.includes("const value"));
+  assert.equal(JSON.stringify(args), before);
+}
+
 // Clean collapsed call headers occupy exactly one row; expansion retains
 // the complete arguments, including multiline commands and Unicode paths.
 {

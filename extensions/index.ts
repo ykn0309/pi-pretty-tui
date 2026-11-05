@@ -37,6 +37,8 @@ import {
   copyToClipboard,
   getAgentDir,
   getMarkdownTheme,
+  getLanguageFromPath,
+  highlightCode,
   type ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
 import {
@@ -4652,7 +4654,7 @@ export default function prettyTui(pi: ExtensionAPI) {
       if (hideCleanTool(context.toolCallId, context.expanded, context.executionStarted)) return cleanToolCall(theme, writeLabel, context.toolCallId);
       const content = typeof args.content === "string" ? args.content : "";
       const path = String(args.path ?? "");
-      if (useCompactToolView(context.toolCallId, context.expanded)) {
+      if (renderMode === "clean" || useCompactToolView(context.toolCallId, context.expanded)) {
         const lines = content.replace(/\t/g, "    ").split("\n");
         while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
         const total = lines.length;
@@ -4665,6 +4667,33 @@ export default function prettyTui(pi: ExtensionAPI) {
       if (hideCleanTool(context.toolCallId, options.expanded, context.executionStarted)) return hiddenToolResult(context, options, output);
       if (options.isPartial) return partialResult(context, theme, "Writing…");
       const failed = completeStatus(context);
+      if (renderMode === "clean") {
+        if (failed) return result(theme, "Write failed", output, options.expanded, true);
+        const status = output ? `Written · ${output}` : "Written";
+        const rows: DisplayRow[] = [{
+          prefix: theme.fg("dim", "└  "), continuation: "   ",
+          content: theme.fg("toolOutput", status),
+        }];
+        if (options.expanded) {
+          const content = typeof context.args?.content === "string" ? context.args.content : "";
+          const source = content.replace(/\r\n|\r/g, "\n").replace(/\t/g, "    ").split("\n");
+          // A final newline terminates the last line; additional blank lines
+          // are actual file content and retain their own line numbers.
+          if (source.at(-1) === "") source.pop();
+          let highlighted: string[];
+          try { highlighted = highlightCode(source.join("\n"), getLanguageFromPath(String(context.args?.path ?? ""))); }
+          catch { highlighted = source; }
+          const digits = String(source.length).length;
+          for (let index = 0; index < source.length; index++) {
+            rows.push({
+              prefix: "   " + theme.fg("dim", `${String(index + 1).padStart(digits)} `),
+              continuation: " ".repeat(digits + 4),
+              content: highlighted[index] ?? source[index],
+            });
+          }
+        }
+        return block(rows);
+      }
       return result(
         theme,
         failed ? output.split("\n")[0] || "Write failed" : "Written",
