@@ -657,7 +657,9 @@ export default function prettyTui(pi: ExtensionAPI) {
       const prefix = heading + (content ? theme.fg("dim", " · ") : "");
       const text = prefix + theme.fg("muted", content) + (count > 1 ? theme.fg("dim", component && expandedErrorRuns.has(component) ? " [Collapse]" : ` [×${count}]`) : "");
       // Wrap rather than truncate; all original detail lines remain accessible.
-      const continuation = " ".repeat(Math.min(visibleWidth(prefix), Math.max(0, Math.floor(width / 3))));
+      // A single-line notification can be entirely its title. Indenting by
+      // that title's length wastes most of the viewport on every continuation.
+      const continuation = " ".repeat(Math.min(2, Math.max(0, width - 1)));
       const rows: string[] = [];
       for (const line of text.split("\n")) {
         const wrapped = wrapTextWithAnsi(line, Math.max(1, width - visibleWidth(continuation)));

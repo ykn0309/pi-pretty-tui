@@ -1792,6 +1792,12 @@ for (const name of ["find", "grep"]) {
     const render = (component, width = 160) => component.render(width).map(stripTerminalSequences);
     showWarning("Operation aborted\nOperation aborted");
     assert.equal(render(children.at(-1)).join("\n").trim(), "⚠ Operation aborted · Operation aborted");
+    const singleLineWarning = '(fff): cwd is $HOME and "enableHomeDirScanning" is false, so FFF search is disabled for this session. Start pi from a project directory, or set "enableHomeDirScanning": true / --fff-enable-home-scan=true to index $HOME.';
+    showWarning(singleLineWarning);
+    const wrappedWarning = render(children.at(-1), 100).filter(Boolean);
+    assert.ok(wrappedWarning.length <= 3, "long warning titles use the available viewport width");
+    assert.ok(wrappedWarning.slice(1).every(row => /^ {2}\S/.test(row)), "continuations use only two spaces");
+    assert.equal(wrappedWarning.map(row => row.trim()).join(" "), `⚠ ${singleLineWarning}`);
     showWarning("Warning title\nAdditional explanation");
     assert.equal(render(children.at(-1)).join("\n").trim(), "⚠ Warning title · Additional explanation");
     showWarning("Warning title\nAdditional explanation");
