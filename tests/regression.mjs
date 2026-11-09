@@ -4536,6 +4536,142 @@ assert.notEqual(ToolExecutionComponent.prototype.render, patchedToolRender);
 assert.notEqual(InteractiveMode.prototype.showExtensionNotify, patchedShowExtensionNotify);
 assert.notEqual(TuiAltScreen.prototype.handleSelectionMouseEvent, patchedSelectionHandler);
 
+// Copy settings remain independent in every rendering and terminal mode.
+for (const mode of ["clean", "compact", "full"]) {
+  for (const tuiMode of ["fullscreen", "regular"]) {
+    for (const messageCopy of [true, false]) {
+      for (const codeBlockCopy of [true, false]) {
+        for (const selectionCopy of [true, false]) {
+          const settings = { mode, messageCopy, codeBlockCopy, selectionCopy };
+          const label = `${tuiMode}/${JSON.stringify(settings)}`;
+          writeFileSync(join(agentDir, "pretty-tui.json"), JSON.stringify(settings));
+          handlers.clear();
+          extension(pi);
+          try {
+            const answer = assistant("120", undefined, [], "Final answer");
+            await emit("session_start", {}, sessionContext([answer]));
+            const copies = [];
+            const host = {
+              ui: { mode: tuiMode, async copyTextToClipboard(text) { copies.push(text); } },
+              renderSessionItems() {},
+            };
+            InteractiveMode.prototype.renderSessionEntries.call(host, []);
+            const canMessageCopy = messageCopy && tuiMode === "fullscreen";
+            const canCodeCopy = codeBlockCopy && tuiMode === "fullscreen";
+            const width = 80;
+            const plain = (lines) => lines.map(stripTerminalSequences);
+            const click = (component, lines, x, y, type = "click") => component.handleMouse?.({
+              type, button: "left", x, y, width, height: lines.length,
+            });
+            const user = new UserMessageComponent("User text with literal │");
+            const userLines = user.render(width);
+            const left = plain(userLines)[0].indexOf("╭");
+            for (const [x, y] of [[left, 0], [left + 2, 1], [plain(userLines)[0].indexOf("╮"), userLines.length - 1]]) {
+              copies.length = 0;
+              assert.equal(Boolean(click(user, userLines, x, y)?.handled), canMessageCopy, label);
+              assert.deepEqual(copies, canMessageCopy ? ["User text with literal │"] : [], label);
+              const fixture = mouseGestureFixture(user, userLines, width);
+              fixture.gesture(x, y, [[1, 0]]);
+              assert.equal(fixture.screen.selectionDragged === true, !canMessageCopy, `${label}: user hit target`);
+            }
+            if (selectionCopy) {
+              const screen = Object.assign(Object.create(TuiAltScreen.prototype), {
+                previousScreen: userLines,
+                getSelectionBounds: () => ({ start: { row: 0, col: 0 }, end: { row: userLines.length - 1, col: width - 1 } }),
+              });
+              assert.equal(screen.getActiveSelectionText(), "User text with literal │", `${label}: border-free selection`);
+            } else {
+              assert.ok(userLines.every(line => removeSelectionMetadata(line) === line), label);
+            }
+
+            const footer = entryRenderers.get("pretty-tui-response-footer")({
+              data: { answerEntryId: answer.id, durationMs: 65_000, outcome: "completed" },
+            }, { expanded: false }, theme);
+            const footerLines = footer.render(width);
+            assert.match(plain(footerLines)[0], /Completed in 1m 5s/, label);
+            assert.equal(plain(footerLines)[0].includes("[Copy]"), canMessageCopy, label);
+            copies.length = 0;
+            if (canMessageCopy) {
+              const x = plain(footerLines)[0].indexOf("[Copy]") + 1;
+              mouseGestureFixture(footer, footerLines, width).gesture(x, 0, [[1, 0]]);
+              assert.deepEqual(copies, ["Final answer"], label);
+            } else {
+              for (let x = 0; x < width; x++) {
+                assert.equal(click(footer, footerLines, x, 0, "press"), undefined, label);
+                assert.equal(click(footer, footerLines, x, 0), undefined, label);
+              }
+              const fixture = mouseGestureFixture(footer, footerLines, width);
+              fixture.gesture(width - 8, 0, [[1, 0]]);
+              assert.equal(fixture.screen.selectionDragged, true, `${label}: footer hit target`);
+              assert.deepEqual(copies, [], label);
+            }
+
+            const code = "  const value = 42;";
+            const source = `\`\`\`ts\n${code}\n\`\`\``;
+            for (const component of [new UserMessageComponent(source), new AssistantMessageComponent({
+              role: "assistant", timestamp: 121_000, stopReason: "stop", content: [{ type: "text", text: source }],
+            })]) {
+              const lines = component.render(width);
+              const rows = plain(lines);
+              const headerY = rows.findIndex(line => line.includes("╭─ ts"));
+              assert.ok(headerY >= 0, `${label}: code frame`);
+              assert.equal(rows[headerY].includes("[Copy]"), canCodeCopy, label);
+              assert.ok(rows.some(line => line.includes(code)), `${label}: code content`);
+              assert.ok(lines[headerY + 1].includes(getMarkdownTheme().highlightCode(code, "ts")[0]), `${label}: syntax highlighting`);
+              if (selectionCopy) {
+                const screen = Object.assign(Object.create(TuiAltScreen.prototype), {
+                  previousScreen: lines,
+                  getSelectionBounds: () => ({ start: { row: headerY + 1, col: 0 }, end: { row: headerY + 1, col: width - 1 } }),
+                });
+                assert.equal(screen.getActiveSelectionText(), code, `${label}: code selection without frames`);
+              }
+              copies.length = 0;
+              if (canCodeCopy) {
+                const x = rows[headerY].indexOf("[Copy]") + 1;
+                assert.equal(click(component, lines, x, headerY)?.handled, true, label);
+                assert.deepEqual(copies, [code], `${label}: snippet click`);
+                copies.length = 0;
+                if (component instanceof UserMessageComponent) {
+                  mouseGestureFixture(component, lines, width).gesture(x, headerY, [[1, 0]]);
+                } else {
+                  // Fullscreen dispatch can target the Markdown leaf directly.
+                  const markdown = component.contentContainer.children.find(child => child instanceof Markdown);
+                  const rows = plain(markdown.cachedLines);
+                  const y = rows.findIndex(line => line.includes("[Copy]"));
+                  mouseGestureFixture(markdown, markdown.cachedLines, markdown.cachedWidth)
+                    .gesture(rows[y].indexOf("[Copy]") + 1, y, [[1, 0]]);
+                }
+                assert.deepEqual(copies, [code], `${label}: snippet click with jitter`);
+              } else {
+                for (let x = 0; x < width; x++) click(component, lines, x, headerY);
+                assert.ok(!copies.includes(code), `${label}: no snippet handler`);
+                if (component instanceof AssistantMessageComponent) {
+                  const markdown = component.contentContainer.children.find(child => child instanceof Markdown);
+                  const rows = plain(markdown.cachedLines);
+                  const y = rows.findIndex(line => line.includes("╭─ ts"));
+                  const fixture = mouseGestureFixture(markdown, markdown.cachedLines, markdown.cachedWidth);
+                  fixture.gesture(rows[y].indexOf("ts"), y, [[1, 0]]);
+                  assert.equal(fixture.screen.selectionDragged, true, `${label}: no Markdown hit target`);
+                }
+                if (!canMessageCopy || component instanceof AssistantMessageComponent) {
+                  const x = rows[headerY].indexOf("ts");
+                  const fixture = mouseGestureFixture(component, lines, width);
+                  fixture.gesture(x, headerY, [[1, 0]]);
+                  assert.equal(fixture.screen.selectionDragged, true, `${label}: no snippet hit target`);
+                  assert.deepEqual(copies, [], label);
+                }
+              }
+            }
+          } finally {
+            await emit("session_shutdown");
+          }
+        }
+      }
+    }
+  }
+}
+console.log("Independent copy settings passed in all rendering and terminal modes.");
+
 // Disabled startup keeps only the settings command: no tools, event handlers,
 // or prototype patches are installed. The command can persist re-enabling.
 {

@@ -74,6 +74,8 @@ const RESPONSE_FOOTER_ENTRY_TYPE = "pretty-tui-response-footer";
 type PrettyTuiConfig = {
   enabled?: boolean;
   mode?: PrettyTuiMode;
+  messageCopy?: boolean;
+  codeBlockCopy?: boolean;
   /** Exclude plugin decoration from fullscreen selections. Opt-in. */
   selectionCopy?: boolean;
   /** "native" keeps Pi's flags-only strong and emphasis. Read when the extension loads. */
@@ -117,6 +119,8 @@ export default function prettyTui(pi: ExtensionAPI) {
   const configPath = join(getAgentDir(), "pretty-tui.json");
   let config = loadConfig(configPath);
   const activeForSession = config.enabled !== false;
+  const messageCopyEnabled = config.messageCopy !== false;
+  const codeBlockCopyEnabled = config.codeBlockCopy !== false;
   const configuredMode = config.mode ?? config.bash?.mode;
   let renderMode: PrettyTuiMode = configuredMode === "full" || configuredMode === "compact" || configuredMode === "clean"
     ? configuredMode
@@ -766,6 +770,10 @@ export default function prettyTui(pi: ExtensionAPI) {
         { value: "full", label: "full", description: "Full tool details and output" },
         { value: "compact", label: "compact", description: "Concise summaries for all built-in tools" },
         { value: "clean", label: "clean", description: "Group supported tools into Running/Done status" },
+        { value: "message-copy on", label: "message-copy on", description: "Enable user-message and final-answer copying and reload" },
+        { value: "message-copy off", label: "message-copy off", description: "Disable user-message and final-answer copying and reload" },
+        { value: "code-block-copy on", label: "code-block-copy on", description: "Show code-block Copy controls and reload" },
+        { value: "code-block-copy off", label: "code-block-copy off", description: "Hide code-block Copy controls and reload" },
         { value: "selection-copy on", label: "selection-copy on", description: "Copy selected text without UI borders in fullscreen mode; enable and reload" },
         { value: "selection-copy off", label: "selection-copy off", description: "Restore native selection copying and reload" },
         { value: "status", label: "status", description: "Show the current settings" },
@@ -775,23 +783,23 @@ export default function prettyTui(pi: ExtensionAPI) {
     },
     handler: async (args, ctx) => {
       let requested = args.trim().toLowerCase();
+      if (!requested && !ctx.hasUI) requested = "status";
 
       if (!requested) {
-        if (!ctx.hasUI) {
-          ctx.ui.notify(
-            `pi-pretty-tui: ${config.enabled !== false ? "enabled" : "disabled"} · mode: ${renderMode} · selection copy: ${config.selectionCopy === true ? "on" : "off"}`,
-            "info",
-          );
-          return;
-        }
         const enabled = `Enabled — ${config.enabled !== false ? "on" : "off"}`;
         const full = `Full — full tool details and output${renderMode === "full" ? " (current)" : ""}`;
         const compact = `Compact — concise tool summaries and nested calls${renderMode === "compact" ? " (current)" : ""}`;
         const clean = `Clean — group supported tools into Running/Done status${renderMode === "clean" ? " (current)" : ""}`;
         const selectionCopy = `Selection copy — ${config.selectionCopy === true ? "on" : "off"} · copy text without UI borders (fullscreen, experimental)`;
-        const selected = await ctx.ui.select("pi-pretty-tui settings", [enabled, full, compact, clean, selectionCopy]);
+        const messageCopy = `Message copy — ${config.messageCopy !== false ? "on" : "off"} · user messages and final answers`;
+        const codeBlockCopy = `Code block copy — ${config.codeBlockCopy !== false ? "on" : "off"} · code-block Copy controls`;
+        const selected = await ctx.ui.select("pi-pretty-tui settings", [enabled, full, compact, clean, messageCopy, codeBlockCopy, selectionCopy]);
         if (!selected) return;
-        requested = selected === selectionCopy
+        requested = selected === messageCopy
+          ? config.messageCopy !== false ? "message-copy off" : "message-copy on"
+          : selected === codeBlockCopy
+          ? config.codeBlockCopy !== false ? "code-block-copy off" : "code-block-copy on"
+          : selected === selectionCopy
           ? config.selectionCopy === true ? "selection-copy off" : "selection-copy on"
           : selected === enabled
           ? config.enabled !== false ? "disable" : "enable"
@@ -804,21 +812,26 @@ export default function prettyTui(pi: ExtensionAPI) {
 
       if (requested === "status") {
         ctx.ui.notify(
-          `pi-pretty-tui: ${config.enabled !== false ? "enabled" : "disabled"} · mode: ${renderMode} · selection copy: ${config.selectionCopy === true ? "on" : "off"}`,
+          `pi-pretty-tui: ${config.enabled !== false ? "enabled" : "disabled"} · mode: ${renderMode} · message copy: ${config.messageCopy !== false ? "on" : "off"} · code block copy: ${config.codeBlockCopy !== false ? "on" : "off"} · selection copy: ${config.selectionCopy === true ? "on" : "off"}`,
           "info",
         );
         return;
       }
-      if (requested === "selection-copy on" || requested === "selection-copy off") {
-        const selectionCopy = requested.endsWith(" on");
+      const copySetting = /^(message-copy|code-block-copy|selection-copy) (on|off)$/.exec(requested);
+      if (copySetting) {
+        const key = copySetting[1] === "message-copy" ? "messageCopy"
+          : copySetting[1] === "code-block-copy" ? "codeBlockCopy" : "selectionCopy";
+        const enabled = copySetting[2] === "on";
         try {
-          saveConfig({ ...config, selectionCopy });
+          saveConfig({ ...config, [key]: enabled });
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          ctx.ui.notify(`Could not save selection-copy setting: ${message}`, "error");
+          ctx.ui.notify(`Could not save ${copySetting[1]} setting: ${message}`, "error");
           return;
         }
-        ctx.ui.notify(`Border-free selection copying ${selectionCopy ? "enabled" : "disabled"}; reloading…`, "info");
+        const label = key === "messageCopy" ? "Message copying"
+          : key === "codeBlockCopy" ? "Code-block copying" : "Border-free selection copying";
+        ctx.ui.notify(`${label} ${enabled ? "enabled" : "disabled"}; reloading…`, "info");
         try { await ctx.reload(); }
         catch (error) {
           const message = error instanceof Error ? error.message : String(error);
@@ -849,7 +862,7 @@ export default function prettyTui(pi: ExtensionAPI) {
         }
       }
       if (requested !== "full" && requested !== "compact" && requested !== "clean") {
-        ctx.ui.notify("Usage: /pretty-tui [enable|disable|full|compact|clean|status|selection-copy on|selection-copy off]", "error");
+        ctx.ui.notify("Usage: /pretty-tui [enable|disable|full|compact|clean|status|message-copy on|message-copy off|code-block-copy on|code-block-copy off|selection-copy on|selection-copy off]", "error");
         return;
       }
 
@@ -1125,7 +1138,7 @@ export default function prettyTui(pi: ExtensionAPI) {
             }));
             if (result?.handled) return result;
           }
-          if (fullscreenTui && event.type === "click" && event.button === "left" && userText.trim()) {
+          if (messageCopyEnabled && fullscreenTui && event.type === "click" && event.button === "left" && userText.trim()) {
             copyTranscriptText(userText);
             return { handled: true };
           }
@@ -1137,8 +1150,17 @@ export default function prettyTui(pi: ExtensionAPI) {
       };
 
       const bubbleClickHitTest = (event: any) => {
-        if (!fullscreenTui || !userText.trim()) return false;
+        if (!fullscreenTui) return false;
         const measured = layout(event.width);
+        if (!messageCopyEnabled || !userText.trim()) {
+          return mouseClickHitTests.get(markdown)?.({
+            ...event,
+            x: event.x - measured.leftPad - (measured.framed ? 2 : 0),
+            y: event.y - (measured.framed ? 1 : 0),
+            width: measured.contentWidth,
+            height: measured.body.length,
+          }) ?? false;
+        }
         return event.x >= measured.leftPad && event.x < measured.leftPad + measured.frameWidth &&
           event.y >= 0 && event.y < measured.body.length + (measured.framed ? 2 : 0);
       };
@@ -2423,7 +2445,7 @@ export default function prettyTui(pi: ExtensionAPI) {
 
     const patchedRender = function (this: any, width: number): string[] {
       const scoped = transcriptMarkdownActive();
-      mouseClickHitTests.set(this, (event) => fullscreenTui &&
+      mouseClickHitTests.set(this, (event) => codeBlockCopyEnabled && fullscreenTui &&
         this[transcriptMarkdownStateKey] === true &&
         (this[codeBlockRegionsKey] ?? []).some((region: any) =>
           event.y === region.y && event.x >= region.xStart && event.x < region.xEnd));
@@ -2579,7 +2601,7 @@ export default function prettyTui(pi: ExtensionAPI) {
       }
 
       const copyLabel = "[Copy]";
-      const showCopyButton = fullscreenTui && maxWidth >= 18;
+      const showCopyButton = codeBlockCopyEnabled && fullscreenTui && maxWidth >= 18;
       const topSuffix = showCopyButton ? ` ${copyLabel} ╮` : "╮";
       const rawLanguage = typeof token.lang === "string" ? token.lang.trim() : "";
       const language = rawLanguage.split(/\s+/, 1)[0] || "code";
@@ -2651,7 +2673,7 @@ export default function prettyTui(pi: ExtensionAPI) {
         delete this[codeBlockRegionsKey];
         return originalHandleMouse?.call(this, event);
       }
-      if (event.button === "left" && (event.type === "press" || event.type === "click")) {
+      if (codeBlockCopyEnabled && fullscreenTui && event.button === "left" && (event.type === "press" || event.type === "click")) {
         const region = (this[codeBlockRegionsKey] ?? []).find(
           (candidate: any) =>
             event.y === candidate.y && event.x >= candidate.xStart && event.x < candidate.xEnd,
@@ -3805,14 +3827,14 @@ export default function prettyTui(pi: ExtensionAPI) {
     return {
       render(width: number): string[] {
         const data = entry.data;
-        mouseClickHitTests.set(this, (event) => fullscreenTui && copyStart >= 0 &&
+        mouseClickHitTests.set(this, (event) => messageCopyEnabled && fullscreenTui && copyStart >= 0 &&
           event.y === 0 && event.x >= copyStart && event.x < copyStart + copyWidth);
         if (!data || width <= 0) return [];
         copyStart = -1;
         copyWidth = 0;
         const answer = data.answerEntryId ? responseAnswerTexts.get(data.answerEntryId) ?? "" : "";
         const copyLabel = "[Copy]";
-        const showCopy = fullscreenTui && Boolean(answer.trim()) && width >= 30;
+        const showCopy = messageCopyEnabled && fullscreenTui && Boolean(answer.trim()) && width >= 30;
         const duration = formatResponseDuration(data.durationMs);
         const statusText = data.outcome === "stopped"
           ? `⚠ Stopped after ${duration}`
@@ -3838,7 +3860,7 @@ export default function prettyTui(pi: ExtensionAPI) {
       },
       handleMouse(event: TuiMouseEvent) {
         if (
-          copyStart < 0 ||
+          !messageCopyEnabled || !fullscreenTui || copyStart < 0 ||
           event.button !== "left" ||
           (event.type !== "press" && event.type !== "click") ||
           event.y !== 0 ||
