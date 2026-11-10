@@ -58,6 +58,22 @@ pi --tui-mode fullscreen
 
 拖动鼠标按选区处理，不触发整条消息复制。链接保留正常行为；文本复制不包含图片附件。
 
+**Message copy** 控制用户消息点击复制和最终回答的 `[Copy]` 按钮。
+**Code block copy** 独立控制代码块的 `[Copy]` 按钮。
+两项均默认开启，可在 `/pretty-tui` 中切换，或运行：
+
+```text
+/pretty-tui message-copy off
+/pretty-tui message-copy on
+/pretty-tui code-block-copy off
+/pretty-tui code-block-copy on
+```
+
+切换任一选项会保存设置并自动重载 Pi。
+布尔值 `messageCopy` 和 `codeBlockCopy` 与 `selectionCopy` 一起保存在 Pi agent 目录下的 `pretty-tui.json` 中。
+关闭消息复制仍保留回答耗时和状态；关闭代码块复制仍保留边框、语法高亮和内容。
+两项均不影响选区复制。
+
 ### 可选的无边框选区复制
 
 在 `/pretty-tui` 中切换 **Selection copy**，或运行：

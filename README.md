@@ -58,6 +58,22 @@ pi --tui-mode fullscreen
 
 Dragging selects text rather than copying a whole message. Links keep their normal behavior; image attachments are not included in text copies.
 
+**Message copy** controls user-message click-to-copy and the final-answer `[Copy]` button.
+**Code block copy** controls snippet `[Copy]` buttons independently.
+Both are on by default and can be toggled in `/pretty-tui` or with:
+
+```text
+/pretty-tui message-copy off
+/pretty-tui message-copy on
+/pretty-tui code-block-copy off
+/pretty-tui code-block-copy on
+```
+
+Toggling either option saves the setting and reloads Pi.
+The `messageCopy` and `codeBlockCopy` booleans are stored in `pretty-tui.json` in Pi's agent directory, alongside `selectionCopy`.
+Disabling message copying keeps the response duration and status; disabling code-block copying keeps code frames, highlighting and content.
+Neither option changes selection copying.
+
 ### Optional border-free selection
 
 Enable **Selection copy** in `/pretty-tui`, or run:
