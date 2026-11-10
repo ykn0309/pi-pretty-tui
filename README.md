@@ -89,7 +89,7 @@ In regular mode, the terminal handles selection and copying, so this option has 
 
 ## Notes
 
-- Tested with **Pi 1.5.0**. Future Pi updates may require compatibility fixes.
+- Tested with **Pi 1.5.1**. Future Pi updates may require compatibility fixes.
 - Keeps Pi's native input behavior and tool execution, including third-party tool implementations.
 - Nested-tool text details are saved with sessions for restoration and may be truncated. Session files can contain sensitive tool output.
 - See [Releases](https://github.com/ykn0309/pi-pretty-tui/releases) for changes and contributor acknowledgments.

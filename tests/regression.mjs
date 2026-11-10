@@ -3433,6 +3433,7 @@ for (const key of [...protoPatchKeys, ...symbolPatchKeys]) {
     ui: { requestRender() {} },
     chatContainer: { children: [root] },
     loadedResourcesContainer: { children: [] },
+    pendingMessagesContainer: { children: [] },
     toolOutputExpanded: false,
     showStatus() {},
   };
@@ -3767,7 +3768,7 @@ for (const key of [...protoPatchKeys, ...symbolPatchKeys]) {
     assert.equal(render(root).join("\n").includes("SHARED_CHILD_DETAIL"), true);
     assert.equal(render(root).join("\n").includes("SHARED_ERROR_DETAIL"), false, "local disclosure does not toggle its sibling");
     const host = { ui: { requestRender() {} }, chatContainer: { children: [root] },
-      loadedResourcesContainer: { children: [] }, toolOutputExpanded: false, showStatus() {},
+      loadedResourcesContainer: { children: [] }, pendingMessagesContainer: { children: [] }, toolOutputExpanded: false, showStatus() {},
       setToolsExpanded: InteractiveMode.prototype.setToolsExpanded };
     InteractiveMode.prototype.setToolsExpanded.call(host, true);
     assert.ok(render(root).join("\n").includes("SHARED_CHILD_DETAIL"));
@@ -3934,7 +3935,7 @@ for (const key of [...protoPatchKeys, ...symbolPatchKeys]) {
     assert.ok(!rows.join("\n").includes("└"));
     assert.ok(rows.every((line) => visibleWidth(line) <= width));
   }
-  const host = { ui: { requestRender() {} }, chatContainer: { children: components }, loadedResourcesContainer: { children: [] },
+  const host = { ui: { requestRender() {} }, chatContainer: { children: components }, loadedResourcesContainer: { children: [] }, pendingMessagesContainer: { children: [] },
     toolOutputExpanded: false, showStatus() {}, setToolsExpanded: InteractiveMode.prototype.setToolsExpanded };
   InteractiveMode.prototype.toggleToolOutputExpansion.call(host);
   assert.ok(components.every((tool) => tool.expanded));
@@ -3996,7 +3997,7 @@ for (const key of [...protoPatchKeys, ...symbolPatchKeys]) {
     const baseline = new ToolExecutionComponent(name, `native-card-${name}`, args, undefined, nativeDefinition, { requestRender() {} }, process.cwd());
     const toolResult = { content: [{ type: "text", text }], details, isError: false, durationMs: 1234 };
     tool.updateResult(toolResult); baseline.updateResult(toolResult);
-    const host = { ui: { requestRender() {} }, chatContainer: { children: [tool] }, loadedResourcesContainer: { children: [] }, toolOutputExpanded: false, showStatus() {} };
+    const host = { ui: { requestRender() {} }, chatContainer: { children: [tool] }, loadedResourcesContainer: { children: [] }, pendingMessagesContainer: { children: [] }, toolOutputExpanded: false, showStatus() {} };
     for (const expanded of [false, true, false]) {
       InteractiveMode.prototype.setToolsExpanded.call(host, expanded);
       baseline.setExpanded(expanded);
