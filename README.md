@@ -60,7 +60,7 @@ Dragging selects text rather than copying a whole message. Links keep their norm
 
 **Message copy** controls user-message click-to-copy and the final-answer `[Copy]` button.
 **Code block copy** controls snippet `[Copy]` buttons independently.
-Both are on by default and can be toggled in `/pretty-tui` or with:
+Both are on by default. Open `/pretty-tui` → **Copy settings** to configure message, code-block and selection copying, or use:
 
 ```text
 /pretty-tui message-copy off
@@ -76,7 +76,7 @@ Neither option changes selection copying.
 
 ### Optional border-free selection
 
-Enable **Selection copy** in `/pretty-tui`, or run:
+Enable **Selection copy** in `/pretty-tui` → **Copy settings**, or run:
 
 ```text
 /pretty-tui selection-copy on

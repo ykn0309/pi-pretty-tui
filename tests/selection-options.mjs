@@ -34,7 +34,7 @@ try{
  await commands.get('pretty-tui').handler('status',ctx);assert.ok(notices.at(-1).message.includes('selection copy: on'));
  await commands.get('pretty-tui').handler('selection-copy off',ctx);
  native();assert.equal(config().selectionCopy,false);assert.equal(reloads,2);
- const menuCtx={...ctx,ui:{...ctx.ui,async select(_title,items){return items.find(item=>item.startsWith('Selection copy'))}}};
+ const menuCtx={...ctx,ui:{...ctx.ui,async select(title,items){return items.find(item=>item.startsWith(title==='Copy settings'?'Selection copy':'Copy settings'))}}};
  await commands.get('pretty-tui').handler('',menuCtx);enabled();assert.equal(config().selectionCopy,true);
  await commands.get('pretty-tui').handler('',menuCtx);native();assert.equal(config().selectionCopy,false);
  for(let i=0;i<5;i++){
@@ -68,7 +68,7 @@ try{
    await commands.get('pretty-tui').handler('status',ctx);
    assert.ok(notices.at(-1).message.includes(`${title.toLowerCase()}: ${value?'on':'off'}`));
   }
-  const menuCtx={...ctx,ui:{...ctx.ui,async select(_title,items){return items.find(item=>item.startsWith(title))}}};
+  const menuCtx={...ctx,ui:{...ctx.ui,async select(menuTitle,items){return items.find(item=>item.startsWith(menuTitle==='Copy settings'?title:'Copy settings'))}}};
   for(const value of [true,false]){
    const before=config(),count=reloads;
    await commands.get('pretty-tui').handler('',menuCtx);
@@ -88,5 +88,21 @@ try{
  await stop();writeFileSync(path,JSON.stringify({messageCopy:'false',codeBlockCopy:0}));boot();
  await commands.get('pretty-tui').handler('status',ctx);
  assert.match(notices.at(-1).message,/message copy: on · code block copy: on · selection copy: off/);
+ // Navigation alone never saves settings or reloads the host.
+ const navigationBefore=config(),navigationReloads=reloads;
+ const choices=['Copy settings','Back','Copy settings',undefined];
+ const seen=[];
+ await commands.get('pretty-tui').handler('',{...ctx,ui:{...ctx.ui,async select(title,items){
+  seen.push(title);
+  if(title==='pi-pretty-tui settings'){
+   assert.ok(!items.some(item=>/^(Message copy|Code block copy|Selection copy)/.test(item)));
+   assert.equal(items.length,5);
+  }else{
+   assert.equal(title,'Copy settings');assert.equal(items.length,4);assert.ok(items.includes('Back'));
+  }
+  const choice=choices.shift();return choice===undefined?undefined:items.find(item=>item.startsWith(choice));
+ }}});
+ assert.deepEqual(seen,['pi-pretty-tui settings','Copy settings','pi-pretty-tui settings','Copy settings']);
+ assert.deepEqual(config(),navigationBefore);assert.equal(reloads,navigationReloads);
  console.log('Copy options passed: default on, independent persistence, commands, menu, completions, reload failure, disabled extension and malformed config.');
 }finally{await stop();native();rmSync(dir,{recursive:true,force:true})}

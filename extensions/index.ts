@@ -785,7 +785,7 @@ export default function prettyTui(pi: ExtensionAPI) {
       let requested = args.trim().toLowerCase();
       if (!requested && !ctx.hasUI) requested = "status";
 
-      if (!requested) {
+      while (!requested) {
         const enabled = `Enabled — ${config.enabled !== false ? "on" : "off"}`;
         const full = `Full — full tool details and output${renderMode === "full" ? " (current)" : ""}`;
         const compact = `Compact — concise tool summaries and nested calls${renderMode === "compact" ? " (current)" : ""}`;
@@ -793,15 +793,22 @@ export default function prettyTui(pi: ExtensionAPI) {
         const selectionCopy = `Selection copy — ${config.selectionCopy === true ? "on" : "off"} · copy text without UI borders (fullscreen, experimental)`;
         const messageCopy = `Message copy — ${config.messageCopy !== false ? "on" : "off"} · user messages and final answers`;
         const codeBlockCopy = `Code block copy — ${config.codeBlockCopy !== false ? "on" : "off"} · code-block Copy controls`;
-        const selected = await ctx.ui.select("pi-pretty-tui settings", [enabled, full, compact, clean, messageCopy, codeBlockCopy, selectionCopy]);
+        const copySettings = "Copy settings — message, code block and selection copying";
+        const selected = await ctx.ui.select("pi-pretty-tui settings", [enabled, full, compact, clean, copySettings]);
         if (!selected) return;
-        requested = selected === messageCopy
-          ? config.messageCopy !== false ? "message-copy off" : "message-copy on"
-          : selected === codeBlockCopy
-          ? config.codeBlockCopy !== false ? "code-block-copy off" : "code-block-copy on"
-          : selected === selectionCopy
-          ? config.selectionCopy === true ? "selection-copy off" : "selection-copy on"
-          : selected === enabled
+        if (selected === copySettings) {
+          const back = "Back";
+          const copy = await ctx.ui.select("Copy settings", [messageCopy, codeBlockCopy, selectionCopy, back]);
+          if (!copy) return;
+          if (copy === back) continue;
+          requested = copy === messageCopy
+            ? config.messageCopy !== false ? "message-copy off" : "message-copy on"
+            : copy === codeBlockCopy
+              ? config.codeBlockCopy !== false ? "code-block-copy off" : "code-block-copy on"
+              : config.selectionCopy === true ? "selection-copy off" : "selection-copy on";
+          continue;
+        }
+        requested = selected === enabled
           ? config.enabled !== false ? "disable" : "enable"
           : selected === full
             ? "full"

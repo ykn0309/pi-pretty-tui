@@ -60,7 +60,7 @@ pi --tui-mode fullscreen
 
 **Message copy** 控制用户消息点击复制和最终回答的 `[Copy]` 按钮。
 **Code block copy** 独立控制代码块的 `[Copy]` 按钮。
-两项均默认开启，可在 `/pretty-tui` 中切换，或运行：
+两项均默认开启。在 `/pretty-tui` → **Copy settings** 子菜单中统一配置消息、代码块和选区复制，也可运行：
 
 ```text
 /pretty-tui message-copy off
@@ -76,7 +76,7 @@ pi --tui-mode fullscreen
 
 ### 可选的无边框选区复制
 
-在 `/pretty-tui` 中切换 **Selection copy**，或运行：
+在 `/pretty-tui` → **Copy settings** 中切换 **Selection copy**，或运行：
 
 ```text
 /pretty-tui selection-copy on
