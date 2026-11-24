@@ -54,6 +54,7 @@ const originalPrototypeMethods = [
   ["InteractiveMode.showError", InteractiveMode.prototype, "showError"],
   ["InteractiveMode.addCacheMissNotice", InteractiveMode.prototype, "addCacheMissNotice"],
   ["InteractiveMode.maybeShowCacheMissNotice", InteractiveMode.prototype, "maybeShowCacheMissNotice"],
+  ["InteractiveMode.maybeShowThinkingDropNotice", InteractiveMode.prototype, "maybeShowThinkingDropNotice"],
   ["InteractiveMode.addMessageToChat", InteractiveMode.prototype, "addMessageToChat"],
   ["TuiAltScreen.handleSelectionMouseEvent", TuiAltScreen.prototype, "handleSelectionMouseEvent"],
   ["TuiAltScreen.handleMouseEvent", TuiAltScreen.prototype, "handleMouseEvent"],
@@ -876,7 +877,26 @@ const counts = (visible) => visible.map(({ output }) => Number(/Done\((\d+) tool
     "info",
   );
   assert.equal(pendingInfoComponents.length, 1);
-  const standaloneInfo = pendingInfoComponents[0].render(80).join("\n")
+  const info = pendingInfoComponents[0];
+  const render = Markdown.prototype.render;
+  let cachedRows;
+  let standaloneRows;
+  // Pi may share a component's rendered rows with other callers. Make a
+  // trailing blank row immutable to catch trimming that mutates the cache.
+  Markdown.prototype.render = function (width) {
+    const rows = render.call(this, width);
+    if (this.text !== "2,770 context tokens avoided") return rows;
+    return cachedRows ??= Object.freeze([...rows, " "]);
+  };
+  try {
+    standaloneRows = info.render(80);
+    assert.deepEqual(info.render(80), standaloneRows);
+    assert.equal(cachedRows?.at(-1), " ");
+    assert.equal(standaloneRows.length, 3, "the activity projection omits the cached trailing blank row");
+  } finally {
+    Markdown.prototype.render = render;
+  }
+  const standaloneInfo = standaloneRows.join("\n")
     .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
   assert.ok(standaloneInfo.includes("Indexing complete"));
   assert.ok(standaloneInfo.includes("2,770 context tokens avoided"));
@@ -4287,6 +4307,42 @@ for (const key of [...protoPatchKeys, ...symbolPatchKeys]) {
   assert.equal(timeline.groupForMember(standalone.id), undefined);
   assert.equal(timeline.currentGroup(), timeline.groupForMember(later.id));
 }
+// The provider diagnostic keeps Pi's wording and display rules.
+{
+  const original = originalPrototypeMethods.find(([name]) => name === "InteractiveMode.maybeShowThinkingDropNotice")[3];
+  const decorate = InteractiveMode.prototype.maybeShowThinkingDropNotice;
+  let timestamp = 100;
+  const render = (showNotice, message, branch = [], enabled = true, width = 100) => {
+    const children = [];
+    const host = {
+      chatContainer: { addChild(component) { children.push(component); } },
+      settingsManager: { getShowCacheMissNotices: () => enabled },
+      sessionManager: { getBranch: () => branch },
+    };
+    showNotice.call(host, { ...message, timestamp: timestamp++ });
+    return children.flatMap(component => component.render(width)).map(stripTerminalSequences);
+  };
+  for (const [provider, diagnostic, item, noun] of [
+    ["OpenAI", "openai_input_transformations", "reasoning", "reasoning item"],
+    ["Anthropic", "anthropic_input_transformations", "thinking_dropped", "thinking block"],
+  ]) {
+    const message = {
+      role: "assistant",
+      diagnostics: [{ type: diagnostic, details: { transformations: [{ type: item, reason: "prefix_mismatch" }] } }],
+    };
+    const native = render(original, message);
+    const decorated = render(decorate, message);
+    assert.equal(decorated.length, native.length);
+    assert.equal(decorated.at(-1).trim(), `⚠ ${provider} dropped 1 ${noun}: prefix_mismatch (details in session)`);
+    assert.equal(decorated.at(-1).trim().slice("⚠ ".length), native.at(-1).trim());
+    const wrapped = render(decorate, message, [], true, 20);
+    assert.ok(wrapped.every(row => visibleWidth(row) <= 20));
+    assert.equal(wrapped.join("").split("⚠").length - 1, 1);
+    assert.deepEqual(render(decorate, message, [], false), []);
+    assert.deepEqual(render(decorate, message, [{ type: "message", message }]), []);
+  }
+}
+
 if (typeof InteractiveMode.prototype.addCacheMissNotice === "function") {
   const firstMessage = assistant("90", undefined, [{ id: "cache-owner-first", name: "bash" }]);
   const nextMessage = assistant("92", "91", [{ id: "cache-owner-next", name: "read" }]);
@@ -4464,8 +4520,8 @@ if (typeof InteractiveMode.prototype.maybeShowCacheMissNotice === "function") {
   console.log("Wrapped cache-notice rebuild and live entry points passed.");
 }
 
-// A live cache miss arrives at message_end, before the message's tools execute.
-// It must not float above the tree: it joins the group once its tool appears.
+// Live provider notices can arrive at message_end, before the message's tools
+// execute. Both join their own tool group once it exists.
 if (typeof InteractiveMode.prototype.maybeShowCacheMissNotice === "function") {
   const cost = { input: 0.15, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.15 };
   const warm = { input: 0, output: 0, cacheRead: 79_000, cacheWrite: 0, totalTokens: 79_000,
@@ -4475,35 +4531,55 @@ if (typeof InteractiveMode.prototype.maybeShowCacheMissNotice === "function") {
     message: { ...assistant("110", undefined, [], "Previous answer").message,
       provider: "fixture", model: "fixture", timestamp: 1000, usage: warm } };
   const deferredMessage = { ...assistant("112", "111", [{ id: "deferred-cache-tool", name: "bash" }]).message,
-    provider: "fixture", model: "fixture", timestamp: 2000, usage: cold };
+    provider: "fixture", model: "fixture", timestamp: 2000, usage: cold,
+    diagnostics: [{ type: "openai_input_transformations", details: {
+      transformations: [{ type: "reasoning", reason: "prefix_mismatch" }],
+    } }],
+  };
   await emit("session_start", {}, sessionContext([previous]));
   const children = [];
   const host = {
     ui: { requestRender() {} }, pendingTools: new Map(),
     settingsManager: { getShowCacheMissNotices: () => true },
-    sessionManager: { getEntries: () => [previous] },
+    sessionManager: { getEntries: () => [previous], getBranch: () => [previous] },
     session: { modelRuntime: { getModel: () => ({ cost: { cacheRead: 0 } }) } },
     addCacheMissNotice: InteractiveMode.prototype.addCacheMissNotice,
     chatContainer: { children, addChild(component) { children.push(component); } },
   };
   const before = children.length;
+  InteractiveMode.prototype.maybeShowThinkingDropNotice.call(host, deferredMessage);
   InteractiveMode.prototype.maybeShowCacheMissNotice.call(host, deferredMessage);
-  assert.equal(children.length, before, "notice was mounted before its tool existed");
+  assert.equal(children.length, before, "notices were mounted before their tool existed");
 
   const tool = new ToolExecutionComponent("bash", "deferred-cache-tool", {}, undefined,
     { renderShell: "self", renderCall: () => new Text("bash", 0, 0) }, host.ui, process.cwd());
   tool.updateResult({ content: [{ type: "text", text: "Done" }], isError: false });
   children.push(tool);
   await emit("tool_execution_start", { toolCallId: "deferred-cache-tool", toolName: "bash" }, sessionContext([previous]));
-  const notice = children.at(-1);
-  assert.notEqual(notice, tool, "deferred notice was never attached");
-  assert.equal(children.length, before + 2);
-  tool.setExpanded(true); // a collapsed group hides non-first members
-  const toolLines = tool.render(120).map(stripTerminalSequences);
-  assert.match(toolLines.join("\n"), /● (?:Running|Done)\(1 tool call/, "group summary disappeared");
-  assert.match(notice.render(120).map(stripTerminalSequences).join("\n"), /Cache miss: 79k/);
-  assert.equal(notice.render(120).map(stripTerminalSequences)[0], "  ├─ ⚠ Cache miss: 79k tokens re-billed (~$0.15)");
-  console.log("Deferred live cache notice joined its tool group.");
+  assert.equal(children.length, before + 3);
+  const notices = children.slice(1);
+  const render = (component) => component.render(120).map(stripTerminalSequences).join("\n");
+  assert.ok(notices.every(notice => render(notice) === ""), "collapsed group hides both notices");
+  tool.setExpanded(true);
+  assert.match(render(tool), /● (?:Running|Done)\(1 tool call/, "group summary disappeared");
+  const text = notices.map(render).join("\n");
+  assert.match(text, /^  ├─ ⚠ Cache miss: 79k tokens re-billed \(~\$0\.15\)/m);
+  assert.match(text, /^  ├─ ⚠ OpenAI dropped 1 reasoning item: prefix_mismatch \(details in session\)/m);
+  assert.equal(text.split("\n").at(-1), "  └─ [↑ Collapse]", "the collapse row follows both notices");
+  const reasoning = notices.find(notice => render(notice).includes("OpenAI dropped"));
+  const narrowRows = reasoning.render(42).map(stripTerminalSequences);
+  assert.ok(narrowRows.every(row => visibleWidth(row) <= 42));
+  assert.match(narrowRows.join("\n"), /details in session\)/);
+  assert.ok(!narrowRows.join("\n").includes("…"));
+  const mounted = children.slice();
+  InteractiveMode.prototype.maybeShowThinkingDropNotice.call(host, deferredMessage);
+  InteractiveMode.prototype.maybeShowCacheMissNotice.call(host, deferredMessage);
+  assert.deepEqual(children, mounted, "projecting the same diagnostics again preserves component order");
+  const tail = notices.at(-1);
+  const tailRows = tail.render(120);
+  tail.handleMouse({ type: "click", button: "left", x: 7, y: tailRows.length - 1, width: 120, height: tailRows.length });
+  assert.ok(notices.every(notice => render(notice) === ""), "both notices collapse with their group");
+  console.log("Deferred provider notices joined their tool group.");
 }
 
 InteractiveMode.prototype.showStatus.call(

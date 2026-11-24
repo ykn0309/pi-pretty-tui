@@ -335,8 +335,13 @@ export default function prettyTui(pi: ExtensionAPI) {
     component: Markdown;
   }>();
   let activityUpdateSequence = 0;
+  const pendingProviderNotices = new Map<string, {
+    mode: any; title: string; content: string; toolCallIds: string[];
+  }>();
   // Assigned by the interactive-mode patch below; tool events carry no `this`.
-  let flushDeferredCacheNotices: ((toolCallId: string) => void) | undefined;
+  let flushDeferredProviderNotices: ((toolCallId?: string) => void) | undefined;
+  const isProviderNotice = (key: string | undefined): boolean =>
+    /^(?:runtime:)?(?:cache-miss|reasoning-drop):/.test(key ?? "");
   const assistantBoundaryKeys = new Set<string>();
   const cleanCompactToolCallIds = new Set<string>();
   const cleanGroupToolCallIds = new Map<string, string[]>();
@@ -582,7 +587,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     member: ActivityMember,
     width: number,
     theme: any,
-  ): string[] => {
+  ): readonly string[] => {
     const content = member.updateContent ?? "";
     if (!content) return [];
     let cached = activityUpdateMarkdownComponents.get(member.id);
@@ -601,10 +606,9 @@ export default function prettyTui(pi: ExtensionAPI) {
       activityUpdateMarkdownComponents.set(member.id, cached);
     }
     const lines = withTranscriptMarkdown(() => cached.component.render(Math.max(1, width)));
-    while (lines.length > 0 && stripTerminalSequences(lines[lines.length - 1]).trim() === "") {
-      lines.pop();
-    }
-    return lines;
+    let end = lines.length;
+    while (end > 0 && stripTerminalSequences(lines[end - 1]).trim() === "") end--;
+    return end === lines.length ? lines : lines.slice(0, end);
   };
 
   const activityUpdateStyle = (member: ActivityMember, theme: any) => {
@@ -630,9 +634,11 @@ export default function prettyTui(pi: ExtensionAPI) {
   ): string[] => {
     if (renderMode !== "clean" || !activityGroupRevealed(group)) return [];
     const { prefix, continuation, childWidth } = activityTreeStyle(group, member, width, theme);
-    const title = truncateToWidth(member.updateTitle ?? "Update", Math.max(1, childWidth - 2), "…");
     const style = activityUpdateStyle(member, theme);
-    const lines = [style.icon + style.title(title)];
+    const title = member.updateTitle ?? "Update";
+    const lines = isProviderNotice(member.updateKey)
+      ? wrapTextWithAnsi(style.icon + style.title(title), childWidth)
+      : [style.icon + style.title(truncateToWidth(title, Math.max(1, childWidth - 2), "…"))];
     if (member.updateContent) {
       const detailWidth = Math.max(1, childWidth - visibleWidth("  │ "));
       const detailLines = renderActivityUpdateMarkdown(member, detailWidth, theme);
@@ -932,12 +938,12 @@ export default function prettyTui(pi: ExtensionAPI) {
         indicator.renderInBorder = originalRenderInBorder;
       }
     };
-    const patchedEditorRender = function (this: any, width: number): string[] {
+    const patchedEditorRender = function (this: any, width: number): readonly string[] {
       currentPromptEditor = this;
       if (width < 3) return originalEditorRender.call(this, width);
 
       const innerWidth = width - 2;
-      const lines = originalEditorRender.call(this, innerWidth) as string[];
+      const lines: readonly string[] = originalEditorRender.call(this, innerWidth);
       const visibleLineCount = Math.max(0, Number(this.renderedVisibleLineCount) || 0);
       const bottomBorderIndex = visibleLineCount + 1;
       const fitInnerWidth = (line: string) =>
@@ -1883,14 +1889,9 @@ export default function prettyTui(pi: ExtensionAPI) {
     const originalShowError = interactiveModePrototype.showError;
     const originalAddCacheMissNotice = interactiveModePrototype.addCacheMissNotice;
     const originalMaybeShowCacheMissNotice = interactiveModePrototype.maybeShowCacheMissNotice;
+    const originalMaybeShowThinkingDropNotice = interactiveModePrototype.maybeShowThinkingDropNotice;
     const originalAddMessageToChat = interactiveModePrototype.addMessageToChat;
     const cacheMessageContexts = new WeakMap<object, any>();
-    const pendingCacheNotices = new Map<string, {
-      key: string; title: string; content: string; toolCallIds: string[];
-    }>();
-    // The interactive-mode instance that owns the chat container. Tool events
-    // carry no `this`, so deferred notices need this handle to mount.
-    const cacheNoticeHost: { current?: any } = {};
     const cacheNoticeOwners = new WeakMap<object, any>();
     const patchedToggleToolOutputExpansion = function (this: any) {
       if (renderMode !== "clean") {
@@ -1928,11 +1929,11 @@ export default function prettyTui(pi: ExtensionAPI) {
       // and transcript rebuilds consistent with that live presentation.
       const orderedEntries = orderContextEntriesForTranscript(entries);
       cacheMessageContexts.delete(this);
-      // Pi re-derives notices on each rebuild (including when its display
-      // setting changes). Remove old projections, not their work groups.
+      // Pi re-derives cache misses on rebuild. Drop old notice projections,
+      // including live reasoning notices, while keeping their work groups.
       for (const group of activityTimeline.groups()) {
         for (const member of [...group.members]) {
-          if (member.updateKey?.startsWith("cache-miss:") || member.updateKey?.startsWith("runtime:cache-miss:")) {
+          if (member.updateKey && isProviderNotice(member.updateKey)) {
             activityTimeline.discardUpdate(member.updateKey);
             activityUpdateComponents.delete(member.id);
             activityUpdateMarkdownComponents.delete(member.id);
@@ -2050,30 +2051,15 @@ export default function prettyTui(pi: ExtensionAPI) {
       }
     };
 
-    // One projection component per activity update member. Cache notices are
-    // also mounted immediately after the tool that anchors them, so container
-    // order matches group order even when the notice arrives before the tools.
+    // Keep notice projections in the same order as their timeline members.
     const mountActivityUpdate = (
       mode: any,
       group: ActivityGroup,
       member: ActivityMember,
-      nativeNodes: Component[] = [],
       after?: Component,
     ): void => {
       const container = mode?.chatContainer;
-      const existing = activityUpdateComponents.get(member.id);
-      if (existing) {
-        const children: Component[] | undefined = container?.children;
-        if (after && children) {
-          const target = children.indexOf(existing);
-          const anchorIndex = children.indexOf(after);
-          if (target >= 0 && anchorIndex >= 0 && target !== anchorIndex + 1) {
-            children.splice(target, 1);
-            children.splice(children.indexOf(after) + 1, 0, existing);
-          }
-        }
-        return;
-      }
+      if (activityUpdateComponents.has(member.id)) return;
       // A mode switch can keep existing components rather than rebuild them.
       const component: Component = {
         render: (width: number) => renderActivityUpdateProjection(group, member, width),
@@ -2083,71 +2069,54 @@ export default function prettyTui(pi: ExtensionAPI) {
           : undefined,
       } as Component;
       activityUpdateComponents.set(member.id, component);
-      const index = after && container?.children ? container.children.indexOf(after) : -1;
-      if (index >= 0) {
-        container.children.splice(index + 1, 0, component);
-        return;
-      }
-      container?.addChild?.(component);
+      const children: Component[] | undefined = container?.children;
+      const preceding = after ? children?.indexOf(after) ?? -1 : -1;
+      const nextMember = group.members[group.members.indexOf(member) + 1];
+      const next = nextMember && activityUpdateComponents.get(nextMember.id);
+      const following = next ? children?.indexOf(next) ?? -1 : -1;
+      if (children && preceding >= 0) children.splice(preceding + 1, 0, component);
+      else if (children && following >= 0) children.splice(following, 0, component);
+      else container?.addChild?.(component);
     };
 
-    // Live cache misses arrive before the message's tools execute, so their
-    // members do not exist yet. Attach the notice once its first tool joins the
-    // group; this keeps it inside the tree instead of above it.
-    const flushPendingCacheNotices = (toolCallId: string): void => {
-      if (pendingCacheNotices.size === 0) return;
-      for (const [messageKey, pending] of [...pendingCacheNotices]) {
-        if (!pending.toolCallIds.includes(toolCallId)) continue;
-        pendingCacheNotices.delete(messageKey);
-        const anchorMember = activityTimeline.memberForTool(toolCallId);
-        if (!anchorMember) continue;
-        const member = activityTimeline.addUpdateAfterMember(
-          anchorMember.id, pending.key, pending.title, pending.content, "warning",
-        ) ?? activityTimeline.addStandaloneUpdate(
-          pending.key, pending.title, pending.content, "warning",
-        );
-        const group = activityTimeline.groupForMember(member.id);
-        if (!group) continue;
-        mountActivityUpdate(
-          cacheNoticeHost.current, group, member, [],
-          toolComponents.get(toolCallId),
-        );
-        refreshActivityGroup(group);
-        cacheNoticeHost.current?.ui?.requestRender?.();
+    const addProviderNotice = (
+      mode: any, key: string, title: string, content: string, anchor?: ActivityMember,
+    ): Component | undefined => {
+      const member = (anchor && activityTimeline.addUpdateAfterMember(anchor.id, key, title, content, "warning")) ??
+        activityTimeline.addStandaloneUpdate(key, title, content, "warning");
+      const group = activityTimeline.groupForMember(member.id);
+      if (!group) return undefined;
+      const after = anchor?.toolCallId ? mode.pendingTools?.get(anchor.toolCallId) ?? toolComponents.get(anchor.toolCallId)
+        : anchor?.messageKey ? thinkingComponents.get(anchor.messageKey) : undefined;
+      mountActivityUpdate(mode, group, member, after);
+      refreshActivityGroup(group);
+      mode.ui?.requestRender?.();
+      return activityUpdateComponents.get(member.id);
+    };
+
+    // Pi can emit both diagnostics before the assistant's tools enter the timeline.
+    flushDeferredProviderNotices = (toolCallId) => {
+      if (!pendingProviderNotices.size) return;
+      const anchor = toolCallId ? activityTimeline.memberForTool(toolCallId) : undefined;
+      if (toolCallId && !anchor) return;
+      for (const [key, pending] of pendingProviderNotices) {
+        if (toolCallId && !pending.toolCallIds.includes(toolCallId)) continue;
+        pendingProviderNotices.delete(key);
+        addProviderNotice(pending.mode, key, pending.title, pending.content, anchor);
       }
     };
-    flushDeferredCacheNotices = flushPendingCacheNotices;
 
-    const patchedAddCacheMissNotice = function (this: any, miss: any) {
-      if (!this.chatContainer?.addChild) {
-        return originalAddCacheMissNotice.call(this, miss);
-      }
-      // Let Pi decide thresholds, formatting and cause labels. Capture its
-      // native nodes rather than duplicating cache heuristics or matching text.
+    const captureProviderNotice = (mode: any, renderNotice: (host: any) => void): string => {
       const nativeNodes: Component[] = [];
-      const captureHost = Object.create(this);
-      captureHost.chatContainer = Object.create(this.chatContainer);
-      captureHost.chatContainer.addChild = (node: Component) => nativeNodes.push(node);
-      originalAddCacheMissNotice.call(captureHost, miss);
-      const text = nativeNodes.flatMap((node) => node.render(4096))
+      const host = Object.create(mode);
+      host.chatContainer = Object.create(mode.chatContainer);
+      host.chatContainer.addChild = (node: Component) => nativeNodes.push(node);
+      renderNotice(host);
+      return nativeNodes.flatMap((node) => node.render(4096))
         .map((line) => stripTerminalSequences(line).trim()).filter(Boolean).join("\n");
-      if (!text) return;
+    };
 
-      // Rebuilds have already restored the *whole* branch. Use the assistant
-      // physically preceding this insertion, not currentGroup() (the last one).
-      const children: any[] = this.chatContainer.children ?? [];
-      let message: any = cacheMessageContexts.get(this);
-      for (let index = children.length - 1; !message && index >= 0; index--) {
-        const child = children[index];
-        if (cacheNoticeOwners.has(child)) { message = cacheNoticeOwners.get(child); break; }
-        if (child instanceof ToolExecutionComponent) continue;
-        if (child instanceof AssistantMessageComponent) { message = (child as any).lastMessage; break; }
-        break; // never cross a user/custom/compaction boundary
-      }
-      // Live Pi may have inserted a provider diagnostic after the assistant.
-      if (!message && this.streamingComponent && children.includes(this.streamingComponent)) {
-        message = this.streamingMessage;
-      }
+    const projectProviderNotice = (mode: any, kind: "cache-miss" | "reasoning-drop", text: string, message: any) => {
       let anchor: ActivityMember | undefined;
       const calls = messageContentItems(message).filter((item: any) => item.type === "toolCall");
       for (let index = calls.length - 1; index >= 0; index--) {
@@ -2158,32 +2127,45 @@ export default function prettyTui(pi: ExtensionAPI) {
         anchor = activityTimeline.memberForThinking(assistantMessageKey(message));
       }
       const key = message
-        ? `cache-miss:${assistantMessageKey(message)}`
-        : `runtime:cache-miss:${++activityUpdateSequence}`;
+        ? `${kind}:${assistantMessageKey(message)}`
+        : `runtime:${kind}:${++activityUpdateSequence}`;
       const [title, ...details] = text.split("\n");
       const content = details.join("\n");
-      cacheNoticeHost.current = this;
       if (!anchor && calls.length > 0) {
-        // The tools have not started yet: their group does not exist. Defer so
-        // the notice lands after the tool instead of floating above the tree.
-        pendingCacheNotices.set(key, {
-          key, title, content, toolCallIds: calls.map((call: any) => call.id),
-        });
-        return;
+        pendingProviderNotices.set(key, { mode, title, content, toolCallIds: calls.map((call: any) => call.id) });
+        return undefined;
       }
-      const member = (anchor && activityTimeline.addUpdateAfterMember(
-        anchor.id, key, title, content, "warning",
-      )) || activityTimeline.addStandaloneUpdate(key, title, content, "warning");
-      const group = activityTimeline.groupForMember(member.id);
-      if (!group) return;
-      mountActivityUpdate(
-        this, group, member, nativeNodes,
-        anchor?.toolCallId ? toolComponents.get(anchor.toolCallId) : undefined,
-      );
-      const component = activityUpdateComponents.get(member.id);
+      const component = addProviderNotice(mode, key, title, content, anchor);
       if (component && message) cacheNoticeOwners.set(component, message);
-      refreshActivityGroup(group);
-      this.ui?.requestRender?.();
+      return component;
+    };
+
+    const patchedMaybeShowThinkingDropNotice = function (this: any, message: any) {
+      if (!this.chatContainer?.addChild) return originalMaybeShowThinkingDropNotice.call(this, message);
+      const text = captureProviderNotice(this, (host) => originalMaybeShowThinkingDropNotice.call(host, message));
+      if (text) projectProviderNotice(this, "reasoning-drop", text, message);
+    };
+
+    const patchedAddCacheMissNotice = function (this: any, miss: any) {
+      if (!this.chatContainer?.addChild) return originalAddCacheMissNotice.call(this, miss);
+      const text = captureProviderNotice(this, (host) => originalAddCacheMissNotice.call(host, miss));
+      if (!text) return;
+
+      // A rebuild may have restored later groups already. Use the assistant
+      // that owns this notice and stop at any intervening transcript entry.
+      const children: any[] = this.chatContainer.children ?? [];
+      let message: any = cacheMessageContexts.get(this);
+      for (let index = children.length - 1; !message && index >= 0; index--) {
+        const child = children[index];
+        if (cacheNoticeOwners.has(child)) { message = cacheNoticeOwners.get(child); break; }
+        if (child instanceof ToolExecutionComponent) continue;
+        if (child instanceof AssistantMessageComponent) { message = (child as any).lastMessage; break; }
+        break;
+      }
+      if (!message && this.streamingComponent && children.includes(this.streamingComponent)) {
+        message = this.streamingMessage;
+      }
+      projectProviderNotice(this, "cache-miss", text, message);
     };
 
     interactiveModePrototype[toolsExpansionPatchKey] = {
@@ -2209,6 +2191,8 @@ export default function prettyTui(pi: ExtensionAPI) {
       patchedAddCacheMissNotice,
       originalMaybeShowCacheMissNotice,
       patchedMaybeShowCacheMissNotice,
+      originalMaybeShowThinkingDropNotice,
+      patchedMaybeShowThinkingDropNotice,
       originalAddMessageToChat,
       patchedAddMessageToChat,
     };
@@ -2221,6 +2205,9 @@ export default function prettyTui(pi: ExtensionAPI) {
     interactiveModePrototype.showStatus = patchedShowStatus;
     interactiveModePrototype.showWarning = patchedShowWarning;
     interactiveModePrototype.showError = patchedShowError;
+    if (typeof originalMaybeShowThinkingDropNotice === "function") {
+      interactiveModePrototype.maybeShowThinkingDropNotice = patchedMaybeShowThinkingDropNotice;
+    }
     if (typeof originalAddCacheMissNotice === "function") {
       interactiveModePrototype.addCacheMissNotice = patchedAddCacheMissNotice;
       if (typeof originalMaybeShowCacheMissNotice === "function") {
@@ -2232,6 +2219,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     }
 
     pi.on("session_shutdown", () => {
+      pendingProviderNotices.clear();
       fullscreenTui = false;
       errorChatContainer = undefined;
       currentTui = undefined;
@@ -2272,6 +2260,9 @@ export default function prettyTui(pi: ExtensionAPI) {
       if (patch.patchedMaybeShowCacheMissNotice === interactiveModePrototype.maybeShowCacheMissNotice) {
         interactiveModePrototype.maybeShowCacheMissNotice = patch.originalMaybeShowCacheMissNotice;
       }
+      if (patch.patchedMaybeShowThinkingDropNotice === interactiveModePrototype.maybeShowThinkingDropNotice) {
+        interactiveModePrototype.maybeShowThinkingDropNotice = patch.originalMaybeShowThinkingDropNotice;
+      }
       if (patch.patchedAddMessageToChat === interactiveModePrototype.addMessageToChat) {
         interactiveModePrototype.addMessageToChat = patch.originalAddMessageToChat;
       }
@@ -2287,6 +2278,7 @@ export default function prettyTui(pi: ExtensionAPI) {
         interactiveModePrototype.showError === patch.originalShowError &&
         interactiveModePrototype.addCacheMissNotice === patch.originalAddCacheMissNotice &&
         interactiveModePrototype.maybeShowCacheMissNotice === patch.originalMaybeShowCacheMissNotice &&
+        interactiveModePrototype.maybeShowThinkingDropNotice === patch.originalMaybeShowThinkingDropNotice &&
         interactiveModePrototype.addMessageToChat === patch.originalAddMessageToChat
       ) {
         delete interactiveModePrototype[toolsExpansionPatchKey];
@@ -2435,8 +2427,8 @@ export default function prettyTui(pi: ExtensionAPI) {
       return originalInvalidate.call(this);
     };
 
-    const copyRows = new WeakMap<object, { source: string[]; padding: number; lines: string[] }>();
-    const selectableMarkdown = (owner: any, source: string[]) => {
+    const copyRows = new WeakMap<object, { source: readonly string[]; padding: number; lines: readonly string[] }>();
+    const selectableMarkdown = (owner: any, source: readonly string[]) => {
       if (!selectionMetadataActive()) return source;
       const padding = Math.max(0, Number(owner.paddingX) || 0);
       if (!padding) return source;
@@ -2450,7 +2442,7 @@ export default function prettyTui(pi: ExtensionAPI) {
       return lines;
     };
 
-    const patchedRender = function (this: any, width: number): string[] {
+    const patchedRender = function (this: any, width: number): readonly string[] {
       const scoped = transcriptMarkdownActive();
       mouseClickHitTests.set(this, (event) => codeBlockCopyEnabled && fullscreenTui &&
         this[transcriptMarkdownStateKey] === true &&
@@ -2840,7 +2832,7 @@ export default function prettyTui(pi: ExtensionAPI) {
    * Wrap content separately from its prefix. Text's normal word wrapping can
    * leave a bullet by itself and drops tree guides on continuation lines.
    */
-  const block = (rows: DisplayRow[]): Component => ({
+  const block = (rows: DisplayRow[]) => ({
     render(width: number): string[] {
       const rendered: string[] = [];
 
@@ -2881,7 +2873,7 @@ export default function prettyTui(pi: ExtensionAPI) {
       return rendered;
     },
     invalidate() {},
-  });
+  } satisfies Component);
 
   type ToolStatus = "running" | "success" | "error";
   const setStatus = (context: any, status: ToolStatus) => {
@@ -3954,6 +3946,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     activityFallbackThemes.clear();
     activityUpdateComponents.clear();
     activityUpdateMarkdownComponents.clear();
+    pendingProviderNotices.clear();
     activityUpdateSequence = 0;
     assistantBoundaryKeys.clear();
     knownToolCallIds.clear();
@@ -4288,7 +4281,7 @@ export default function prettyTui(pi: ExtensionAPI) {
     if (toolCalls.length === 0) return false;
     for (const toolCall of toolCalls) {
       activityTimeline.addTool(toolCall.id, toolCall.name ?? "tool");
-      flushDeferredCacheNotices?.(toolCall.id);
+      flushDeferredProviderNotices?.(toolCall.id);
       if (!cleanRun.currentToolCallIds.includes(toolCall.id)) {
         cleanRun.currentToolCallIds.push(toolCall.id);
       }
@@ -4391,7 +4384,7 @@ export default function prettyTui(pi: ExtensionAPI) {
       return;
     }
     activityTimeline.addTool(event.toolCallId, event.toolName);
-    flushDeferredCacheNotices?.(event.toolCallId);
+    flushDeferredProviderNotices?.(event.toolCallId);
     if (!cleanRun.currentToolCallIds.includes(event.toolCallId)) {
       cleanRun.currentToolCallIds.push(event.toolCallId);
     }
@@ -4467,6 +4460,8 @@ export default function prettyTui(pi: ExtensionAPI) {
     }
 
     clearPendingToolActivities();
+    // Keep the notice visible if its planned tool never entered the timeline.
+    flushDeferredProviderNotices?.();
     // Finalize the last group after retries/compaction have definitely ended.
     finishCleanGroup("done");
     for (const group of cleanRun.groups) {
